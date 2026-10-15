@@ -130,9 +130,9 @@ struct PortraitMetrics {
 /// directly like in landscape; the lower half is the machine you drive it with (window bar, key
 /// row, trackpad), the way a folded laptop's bottom half carries them. A phone's (Noah, 2026-09-27)
 /// puts the picture in a fixed 16:10 pane at the top and gives the rest to the controls: row 1
-/// (Apps, Aa, Keyboard, Desktop, Settings), the thumbnails, six keys and a taller trackpad
-/// (`PhonePortraitLayout`). The picture pane, the key row, the trackpad, the drawer and the Settings
-/// panel are the same views in both; each arrangement places them.
+/// (Apps, Aa, Keyboard, Desktop, Settings), the thumbnails, six keys and the arrows cap, and a
+/// taller trackpad (`PhonePortraitLayout`). The picture pane, the key row, the trackpad, the drawer
+/// and the Settings panel are the same views in both; each arrangement places them.
 struct PortraitStreamScreen: View {
     @ObservedObject var client: StreamClient
     var metrics: PortraitMetrics = .regular
@@ -160,6 +160,14 @@ struct PortraitStreamScreen: View {
     var linkLine: String? = nil
     /// Take the Tour in the panel (see `StreamScreen.takeTour`).
     var takeTour: () -> Void = {}
+
+    /// The phone's arrows cross, opened and closed by the key row's arrows cap. DEBUG `-SillArrows 1`
+    /// (ContentView's contract) starts it open.
+    #if DEBUG
+    @State private var arrowsOpen = UserDefaults.standard.bool(forKey: "SillArrows")
+    #else
+    @State private var arrowsOpen = false
+    #endif
 
     private var streamShape: RoundedRectangle { RoundedRectangle(cornerRadius: 12, style: .continuous) }
     /// The Duo's fold across this screen (StreamScreen, iOS 27.1): where the halves split.
@@ -308,8 +316,16 @@ struct PortraitStreamScreen: View {
                 phoneRow2(layout)
                     .opacity(drawerOpen || settingsOpen ? 0 : 1)
                     .accessibilityHidden(drawerOpen)
-                keyRow(.phone).accessibilityHidden(drawerOpen)
+                keyRow(.phone, arrows: layout.hasArrows).accessibilityHidden(drawerOpen)
                 trackpad(verticalSpan: layout.trackpadSpan).accessibilityHidden(drawerOpen)
+            }
+
+            // Over the trackpad, or over the picture's bottom edge while the keyboard covers the
+            // trackpad. Only the cap closes it: a tap beside it reaches the trackpad or the Mac.
+            if arrowsOpen, !drawerOpen, !settingsOpen, let rect = layout.arrows(keyboardShown: keyboardShown) {
+                ArrowCross(latched: $latched, send: { client.sendFromKeyRow($0) })
+                    .placed(rect, in: layout.size)
+                    .transition(.opacity)
             }
 
             if drawerOpen {
@@ -334,6 +350,7 @@ struct PortraitStreamScreen: View {
                     .transition(settingsTransition(UnitPoint(x: layout.settingsAnchor.x, y: layout.settingsAnchor.y)))
             }
         }
+        .animation(.easeOut(duration: 0.14), value: arrowsOpen)
     }
 
     /// Row 1: the landscape bar's five, in its order, widened to share the row with the key row's
@@ -430,8 +447,9 @@ struct PortraitStreamScreen: View {
     }
 
     /// A key row key keeps what the sprite shows (StreamClient.sendFromKeyRow).
-    private func keyRow(_ keys: KeyRow.Keys) -> some View {
-        KeyRow(metrics: metrics, keys: keys, latched: $latched, keyboardShown: keyboardShown,
+    private func keyRow(_ keys: KeyRow.Keys, arrows: Bool = false) -> some View {
+        KeyRow(metrics: metrics, keys: keys, arrows: arrows, arrowsOpen: $arrowsOpen,
+               latched: $latched, keyboardShown: keyboardShown,
                send: { client.sendFromKeyRow($0) },
                toggleKeyboard: { overlay.toggleKeyboard() },
                showSpotlight: client.active == .desktop)
@@ -587,13 +605,15 @@ private enum Key {
     case keyboard
     /// Spotlight on the Mac: always exactly ⌘Space, whatever is latched.
     case spotlight
+    /// The phone's arrows cap: opens and closes the arrows cross (`ArrowCross`).
+    case arrows
 
     #if DEBUG
     /// What the cap says, for `-SillInputTest` to find it by.
     var title: String? {
         switch self {
         case .press(let title, _, _), .modifier(let title, _, _): return title
-        case .arrow, .keyboard, .spotlight: return nil
+        case .arrow, .keyboard, .spotlight, .arrows: return nil
         }
     }
     #endif
@@ -603,14 +623,18 @@ private enum Key {
 /// tab, the four modifiers, the four arrows, the keyboard itself and Spotlight, twelve equal caps
 /// across the screen at 48 pt tall, ≈49 pt wide at 710 pt — or, in the compact halves where twelve
 /// 44 pt caps do not fit across 472 pt, six and then six, 72 pt wide at 500 pt. On a phone
-/// (`.phone`): escape, tab and the four modifiers, six caps across the row; the Keyboard button is
-/// in row 1, and Spotlight is cmd then space on the keyboard (a latched ⌘ turns a typed space into
-/// ⌘Space). Arrows there come from a hardware keyboard.
+/// (`.phone`): escape, tab, the four modifiers and the arrows cap, seven caps across the row (six on
+/// a phone narrower than `PhonePortraitLayout.arrowsMinWidth`); the arrows cap opens the arrows
+/// cross (`ArrowCross`) rather than taking four caps. The Keyboard button is in row 1, and Spotlight
+/// is cmd then space on the keyboard (a latched ⌘ turns a typed space into ⌘Space).
 private struct KeyRow: View {
     enum Keys { case full, phone }
 
     let metrics: PortraitMetrics
     let keys: Keys
+    /// The phone's row ends in the arrows cap, which toggles `arrowsOpen`.
+    var arrows = false
+    @Binding var arrowsOpen: Bool
     @Binding var latched: KeyModifiers
     let keyboardShown: Bool
     let send: (InputEvent) -> Void
@@ -639,7 +663,7 @@ private struct KeyRow: View {
 
     private var shown: [Key] {
         switch keys {
-        case .phone: return Self.phone
+        case .phone: return arrows ? Self.phone + [.arrows] : Self.phone
         case .full: return showSpotlight ? Self.all : Self.all.filter { if case .spotlight = $0 { return false } else { return true } }
         }
     }
@@ -695,6 +719,13 @@ private struct KeyRow: View {
                     .font(.system(size: 19))
                     .foregroundStyle(Palette.text)
             }
+        case .arrows:
+            cap(open: arrowsOpen, label: arrowsOpen ? "Hide the arrow keys" : "Show the arrow keys",
+                action: { tap(key) }) {
+                Image(systemName: ArrowCross.capSymbol)
+                    .font(.system(size: 19))
+                    .foregroundStyle(arrowsOpen ? Palette.accent : Palette.text)
+            }
         }
     }
 
@@ -711,6 +742,8 @@ private struct KeyRow: View {
             // Latched modifiers do not join ⌘Space, but the tap still spends them.
             Spotlight.press(send: send)
             latched = []
+        case .arrows:
+            arrowsOpen.toggle()
         }
     }
 
@@ -781,4 +814,90 @@ private struct KeyRow: View {
         }
     }
     #endif
+}
+
+// MARK: - Arrows cross
+
+/// The phone's arrow keys, like a hardware keyboard's inverted T laid out as a cross: up, left, right
+/// and down around return. A key goes down and up as the key row's caps do, carrying whatever is
+/// latched (⌥← is opt, then ←), and the latch is spent; held, it repeats as a Mac key does, 0.4 s
+/// after the first press and then 12 a second, every repeat with the modifiers the first carried, so
+/// shift held through a run of ↓ selects the whole run.
+private struct ArrowCross: View {
+    @Binding var latched: KeyModifiers
+    let send: (InputEvent) -> Void
+
+    /// The arrows cap's symbol: the keyboard's arrow cluster where the system has it.
+    static let capSymbol: String = UIImage(systemName: "arrowkeys") != nil ? "arrowkeys" : "dpad"
+
+    private static let firstRepeat: Duration = .milliseconds(400)
+    private static let repeatEvery: Duration = .milliseconds(83)
+    private static let returnKey: UInt16 = 0x28
+
+    @State private var held: UInt16? = nil
+    @State private var repeater: Task<Void, Never>? = nil
+
+    var body: some View {
+        let key = PhonePortraitLayout.arrowKey, gap = PhonePortraitLayout.arrowGap
+        VStack(spacing: gap) {
+            arrowKey("chevron.up", HIDKey.upArrow, "Up arrow").frame(width: key, height: key)
+            HStack(spacing: gap) {
+                arrowKey("chevron.left", HIDKey.leftArrow, "Left arrow")
+                arrowKey("return", Self.returnKey, "Return")
+                arrowKey("chevron.right", HIDKey.rightArrow, "Right arrow")
+            }
+            .frame(height: key)
+            arrowKey("chevron.down", HIDKey.downArrow, "Down arrow").frame(width: key, height: key)
+        }
+        .onDisappear(perform: release)
+    }
+
+    private func arrowKey(_ symbol: String, _ usage: UInt16, _ label: String) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        let down = held == usage
+        return Image(systemName: symbol)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(down ? Palette.accent : Palette.text)
+            .frame(width: PhonePortraitLayout.arrowKey, height: PhonePortraitLayout.arrowKey)
+            .background(shape.fill(down ? Palette.controlOpen : Palette.control.opacity(0.92)))
+            .overlay(shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+            .shadow(color: .black.opacity(0.45), radius: 8, y: 3)
+            .contentShape(shape)
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in if held == nil { press(usage) } }
+                .onEnded { _ in if held == usage { release() } })
+            .accessibilityElement()
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { tapOnce(usage) }
+    }
+
+    /// The finger lands: the key once now, then again while it stays down. One key at a time: a second
+    /// finger on another key does nothing, and lifting it leaves the first key repeating.
+    private func press(_ usage: UInt16) {
+        let modifiers = latched
+        latched = []
+        held = usage
+        KeyChord.press(usage, with: modifiers).forEach(send)
+        repeater?.cancel()
+        repeater = Task { @MainActor in
+            try? await Task.sleep(for: Self.firstRepeat)
+            while !Task.isCancelled, held == usage {
+                KeyChord.press(usage, with: modifiers).forEach(send)
+                try? await Task.sleep(for: Self.repeatEvery)
+            }
+        }
+    }
+
+    private func release() {
+        repeater?.cancel()
+        repeater = nil
+        held = nil
+    }
+
+    /// VoiceOver's double tap: one press, no repeat.
+    private func tapOnce(_ usage: UInt16) {
+        KeyChord.press(usage, with: latched).forEach(send)
+        latched = []
+    }
 }

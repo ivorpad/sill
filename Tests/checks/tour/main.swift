@@ -330,7 +330,7 @@ check(seUp.layout == P && seUp.stream == CGRect(x: 8, y: 8, width: 359, height: 
 /// A phone held upright: PhonePortraitLayout's rects, where PortraitStreamScreen places its views and
 /// so where they report themselves: the picture's pane, row 1's Aa, Keyboard and Settings, the strip
 /// as its thumbnails' band (the halo's 5 pt above, the badge's 6 below: WindowStrip.tourBand at the
-/// strip's 6 pt pad), the six caps and the trackpad.
+/// strip's 6 pt pad), the key row (seven caps, six under 364 pt) and the trackpad.
 func phoneModel(_ w: CGFloat, _ h: CGFloat) -> Screen {
     let l = PhonePortraitLayout(size: CGSize(width: w, height: h))
     let pad = (PhonePortraitLayout.stripHeight - 50) / 2
@@ -769,12 +769,28 @@ func words(_ t: TourTopic, _ layout: TourLayout, mac: String = "Mac mini", devic
 func texts(_ c: TourCopy) -> [String] { c.rows.map(\.text) }
 let touchPad = words(.touch, L, first: true)
 check(touchPad.title == "Tap, Hold and Drag" && touchPad.subtitle == "What you do here happens on Mac mini.", "touch: title and subtitle")
-check(texts(touchPad) == ["Tap to click.", "Touch and hold to right-click.", "Drag to move the pointer; two fingers scroll or pinch to zoom.", "Apple Pencil works as a mouse."], "touch on iPad: \(texts(touchPad))")
-check(touchPad.rows.map(\.symbol) == ["hand.tap", "contextualmenu.and.cursorarrow", "hand.draw", "applepencil"], "touch's symbols")
+// Sideways one finger moves the pointer from where it is and a tap then a drag drags
+// (InputOverlayView.relativeDrag); upright the picture is direct, the words as before.
+check(texts(touchPad) == ["Tap to click.", "Touch and hold to right-click.",
+                          "Drag to move the pointer from where it is, as on a trackpad; two fingers scroll or pinch to zoom.",
+                          "Tap, then touch again and drag to select text or move a window.", "Apple Pencil works as a mouse."],
+      "touch on iPad: \(texts(touchPad))")
+check(touchPad.rows.map(\.symbol) == ["hand.tap", "contextualmenu.and.cursorarrow", "hand.draw", "cursorarrow.and.square.on.square.dashed", "applepencil"],
+      "touch's symbols")
+check(touchPad.rows[3].spans == [TourSpan(text: "Tap, then touch again and drag", strong: true), TourSpan(text: " to select text or move a window.", strong: false)],
+      "the tap drag's row: its gesture semibold")
+for (layout, device) in [(P, "iPad"), (P, "iPhone"), (F, "iPhone")] {
+    let upright = words(.touch, layout, device: device)
+    check(texts(upright).prefix(3) == ["Tap to click.", "Touch and hold to right-click.", "Drag to move the pointer; two fingers scroll or pinch to zoom."]
+          && texts(upright).count == (device == "iPad" ? 4 : 3) && upright.rows.map(\.symbol).prefix(3) == ["hand.tap", "contextualmenu.and.cursorarrow", "hand.draw"],
+          "touch upright (\(layout), \(device)): direct, no tap drag: \(texts(upright))")
+}
 check(touchPad.rows[0].spans == [TourSpan(text: "Tap", strong: true), TourSpan(text: " to click.", strong: false)], "the control's name semibold")
 check(touchPad.hint == "The picture of Mac mini fills the screen below the bar.", "touch's hint sideways")
 check(words(.touch, P).hint == "The picture of Mac mini fills the top half of the screen.", "touch's hint upright")
-check(texts(words(.touch, L, device: "iPhone")) == ["Tap to click.", "Touch and hold to right-click.", "Drag to move the pointer; two fingers scroll or pinch to zoom."], "no Pencil row on iPhone")
+check(texts(words(.touch, L, device: "iPhone")) == ["Tap to click.", "Touch and hold to right-click.",
+                                                    "Drag to move the pointer from where it is, as on a trackpad; two fingers scroll or pinch to zoom.",
+                                                    "Tap, then touch again and drag to select text or move a window."], "no Pencil row on iPhone")
 check(words(.touch, L, mac: "").subtitle == "What you do here happens on your Mac." && words(.touch, P, mac: "").hint == "The picture of your Mac fills the top half of the screen.",
       "the “your Mac” fallback")
 let barL = words(.bar, L)

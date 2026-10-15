@@ -23,7 +23,7 @@ enum TourTopic: String, CaseIterable, Comparable {
 /// inner display, an iPad, an iPad window narrower than 600 pt), the window bar and the keys under
 /// the picture's half; and a phone held upright (`PhonePortraitLayout`: the picture in a 16:10 pane
 /// at the top, then row 1 with Apps, Aa, Keyboard, Desktop and Settings, the thumbnails, six keys
-/// and the trackpad; the Duo's outer display upright too).
+/// and the arrows cap, and the trackpad; the Duo's outer display upright too).
 enum TourLayout: String, Hashable {
     case landscape, portrait, phone
 
@@ -503,9 +503,18 @@ enum TourPolicy {
         let keyboardRow = row("keyboard", [strong("Keyboard"), plain(" types on \(mac), on screen or with a hardware keyboard.")])
         switch t {
         case .touch:
+            // Sideways one finger moves the pointer from where it is (InputOverlayView.relativeDrag),
+            // and a tap then a drag drags; upright the picture is direct and the trackpad is the pad.
+            let drag = layout == .landscape
+                ? " to move the pointer from where it is, as on a trackpad; two fingers scroll or pinch to zoom."
+                : " to move the pointer; two fingers scroll or pinch to zoom."
             var rows = [row("hand.tap", [strong("Tap"), plain(" to click.")]),
                         row("contextualmenu.and.cursorarrow", [strong("Touch and hold"), plain(" to right-click.")]),
-                        row("hand.draw", [strong("Drag"), plain(" to move the pointer; two fingers scroll or pinch to zoom.")])]
+                        row("hand.draw", [strong("Drag"), plain(drag)])]
+            if layout == .landscape {
+                rows.append(row("cursorarrow.and.square.on.square.dashed",
+                                [strong("Tap, then touch again and drag"), plain(" to select text or move a window.")]))
+            }
             if iPad { rows.append(row("applepencil", [strong("Apple Pencil"), plain(" works as a mouse.")])) }
             let hint: String
             switch layout {

@@ -115,8 +115,8 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
     /// Writes this device's own pointer (`StreamClient.setOwnPointer`, from the trackpad: a fraction
     /// of the frame). Called with the virtual cursor on every move, click, drag and scroll, so the
     /// sprite follows the finger at touch rate rather than a network round trip behind it. Never
-    /// cleared when the pad leaves the screen: the pointer outlives a rotation (in landscape it
-    /// hides, and comes back in portrait).
+    /// cleared when the pad leaves the screen: the pointer outlives a rotation (in landscape it stays,
+    /// and the picture's one-finger drag carries on from it).
     var setPointer: (CGPoint) -> Void = { _ in }
     /// The feed's anchor and re-seeds (`StreamClient.pointerFeedState`). See `pad`.
     var feed: () -> (anchor: CGPoint?, reseeds: Int) = { (nil, 0) }
@@ -158,8 +158,9 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
 
     /// How far the pointer travels for a full swipe across the pad. The client does not know the
     /// Mac's size, so a real trackpad's pt-for-pt acceleration is not available to copy; 1.25
-    /// frames per swipe lands close enough to reach any corner in one comfortable stroke.
-    private static let travel: CGFloat = 1.25
+    /// frames per swipe lands close enough to reach any corner in one comfortable stroke. Landscape's
+    /// picture moves its relative pointer by the same (InputOverlayView's `travel`).
+    static let travel: CGFloat = 1.25
 
     // One-finger pointer motion: the tracker, from touch-down.
 

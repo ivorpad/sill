@@ -8,6 +8,7 @@
 #   Tests/touchrig/run.sh NAME                 the working tree's surfaces; the log is .build/touchrig/NAME.log
 #   Tests/touchrig/run.sh --rev REV NAME       the surfaces as they are at REV (git show), for a baseline
 #   Tests/touchrig/run.sh --switch off NAME    sendGesture answers false, as with the device's switch off
+#   RIG_RELATIVE=1 Tests/touchrig/run.sh NAME  the overlay as landscape's picture (relativeDrag), its sprite logged
 #   Tests/touchrig/compare.py BASE.log NEW.log [OFF.log]   H7's verdict
 #   Tests/touchrig/run.sh --replay TRACE.jsonl [--rev REV] [--only G7,G13] [--fresh] NAME
 #                                              a TouchTrace recording (Tests/evidence/touchtrace) replayed
@@ -79,6 +80,8 @@ flags=()
 if grep -q "var sendGesture" TrackpadView.swift; then flags+=(-D GESTURES); fi
 # Pinch to zoom when the overlay has it (the display view's `zoom`, PictureZoom.swift).
 if grep -q "PictureZoom" InputOverlay.swift; then flags+=(-D ZOOM); fi
+# Landscape's relative drag when the overlay has it (RIG_RELATIVE=1 turns it on).
+if grep -q "var relativeDrag" InputOverlay.swift; then flags+=(-D RELATIVE); fi
 cp "$here/Stubs.swift" "$here/main.swift" "$here/TouchSynth.h" "$here/TouchSynth.m" "$here/Bridging.h" .
 
 target=arm64-apple-ios17.0-simulator
@@ -180,7 +183,7 @@ xcrun simctl boot "$udid" 2>/dev/null || true
 xcrun simctl bootstatus "$udid" -b >/dev/null
 xcrun simctl install "$udid" "$work/TouchRig.app"
 log="$out/$name.log"
-SIMCTL_CHILD_RIG_REPLAY="${replay:+replay.json}" SIMCTL_CHILD_RIG_REPLAY_FRESH="$fresh" SIMCTL_CHILD_RIG_VIDEO="${RIG_VIDEO:-}" SIMCTL_CHILD_RIG_SWITCH="$switch" perl -e 'alarm shift; exec @ARGV' 600 \
+SIMCTL_CHILD_RIG_REPLAY="${replay:+replay.json}" SIMCTL_CHILD_RIG_REPLAY_FRESH="$fresh" SIMCTL_CHILD_RIG_VIDEO="${RIG_VIDEO:-}" SIMCTL_CHILD_RIG_SWITCH="$switch" SIMCTL_CHILD_RIG_RELATIVE="${RIG_RELATIVE:-}" perl -e 'alarm shift; exec @ARGV' 600 \
     xcrun simctl launch --console-pty --terminate-running-process "$udid" me.saffer.sill.touchrig > "$log" 2>&1 || true
 xcrun simctl uninstall "$udid" me.saffer.sill.touchrig || true
 if [ "$made" = 1 ]; then xcrun simctl shutdown "$udid" || true; xcrun simctl delete "$udid" || true; fi

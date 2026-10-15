@@ -219,11 +219,10 @@ struct StreamScreen: View {
                 // Under the pairing overlay and the tour nothing takes a touch: not the bar, and
                 // not the stream's UIKit input view (nor, so, the Pencil, a hover or a key).
                 .allowsHitTesting(!overlayShown && tour == nil)
-                // The pointer sprite follows the layout: the trackpad's arrow shows only in the
-                // laptop layout, and a rotation re-renders it at once; the Mac's arrow stays.
-                .onChange(of: DuoLayout.of(geo.size).isPortrait, initial: true) { _, portrait in
-                    client.setPointerLayout(portrait: portrait)
-                }
+                // This device's relative pointer shows in every layout: the portrait trackpad's, and
+                // landscape's one-finger drag on the picture (InputOverlayView.relativeDrag), so a
+                // rotation keeps it where it is.
+                .onAppear { client.setPointerLayout(portrait: true) }
                 // The tour: a sibling above the layouts, as the pairing overlay is, and under it: an
                 // outside link puts the tour aside until the overlay has closed.
                 if let run = tour, !overlayShown {
@@ -866,7 +865,11 @@ struct StreamScreen: View {
                              isKeyboardShown: $keyboardShown,
                              latchedModifiers: latched,
                              onModifiersConsumed: { latched = [] },
-                             sendGesture: { client.sendGesture($0, fingers: $1) })
+                             sendGesture: { client.sendGesture($0, fingers: $1) },
+                             // Sideways the picture is the only surface: one finger drags the pointer
+                             // from where it is, as the portrait trackpad does; taps stay direct.
+                             relativeDrag: true,
+                             feed: { let f = client.pointerFeedState; return (f.anchor, f.reseeds) })
             }
             .background(Palette.panel)
             .overlay(alignment: .top) { LinkLineView(text: shownLinkLine) }

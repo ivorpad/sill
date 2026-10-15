@@ -4,8 +4,9 @@
 // iPhone Duo's real cover, docs/iphone-duo-plan.md), the
 // approved mockup's numbers, 320 pt wide, and a grid of every width from 300 to 599 pt and every
 // height from the width + 1 to 1,400: everything inside the screen and in order, the gaps, five
-// equal buttons and six equal caps across the row, the picture 16:10 unless the trackpad would drop
-// under 120 pt, the trackpad's span, the ruler, the drawer and the panel across row 1, the dim.
+// equal buttons and seven equal caps across the row (six below 364 pt, without the arrows cap), the
+// picture 16:10 unless the trackpad would drop under 120 pt, the trackpad's span, the ruler, the
+// drawer and the panel across row 1, the dim, and the arrows cross with the keyboard down and up.
 //   swiftc -O iOSClient/PhonePortraitLayout.swift Tests/checks/phone-portrait/main.swift -o .build/checks/phone-portrait/check && .build/checks/phone-portrait/check
 import CoreGraphics
 import Foundation
@@ -65,29 +66,29 @@ let duoCover = Phone(name: "the iPhone Duo's cover (iOS 27.1, less its camera's 
 let table: [Row] = [
     // today: trackpad 243, panel room 351
     Row(phone: proMax, picture: CGSize(width: 424, height: 265), row1: (297, 347), button: 76, row2: (363, 425),
-        row3: (435, 479), cap: 62, trackpad: CGSize(width: 412, height: 389), panelRoom: 523),
+        row3: (435, 479), cap: 52, trackpad: CGSize(width: 412, height: 389), panelRoom: 523),
     // today: 202, 310
     Row(phone: pro, picture: CGSize(width: 386, height: 241), row1: (273, 323), button: 68.4, row2: (339, 401),
-        row3: (411, 455), cap: 334.0 / 6, trackpad: CGSize(width: 374, height: 331), panelRoom: 465),
+        row3: (411, 455), cap: 326.0 / 7, trackpad: CGSize(width: 374, height: 331), panelRoom: 465),
     // today: 192, 300
     Row(phone: fifteenPro, picture: CGSize(width: 377, height: 235), row1: (267, 317), button: 66.6, row2: (333, 395),
-        row3: (405, 449), cap: 325.0 / 6, trackpad: CGSize(width: 365, height: 318), panelRoom: 452),
+        row3: (405, 449), cap: 317.0 / 7, trackpad: CGSize(width: 365, height: 318), panelRoom: 452),
     // today: 194, 302
     Row(phone: seventeenE, picture: CGSize(width: 374, height: 233), row1: (265, 315), button: 66, row2: (331, 393),
-        row3: (403, 447), cap: 322.0 / 6, trackpad: CGSize(width: 362, height: 324), panelRoom: 458),
+        row3: (403, 447), cap: 314.0 / 7, trackpad: CGSize(width: 362, height: 324), panelRoom: 458),
     // today: 177, 285
     Row(phone: mini, picture: CGSize(width: 359, height: 224), row1: (256, 306), button: 63, row2: (322, 384),
-        row3: (394, 438), cap: 307.0 / 6, trackpad: CGSize(width: 347, height: 298), panelRoom: 432),
+        row3: (394, 438), cap: 299.0 / 7, trackpad: CGSize(width: 347, height: 298), panelRoom: 432),
     // today: 119, 227
     Row(phone: se, picture: CGSize(width: 359, height: 224), row1: (256, 306), button: 63, row2: (322, 384),
-        row3: (394, 438), cap: 307.0 / 6, trackpad: CGSize(width: 347, height: 183), panelRoom: 317),
+        row3: (394, 438), cap: 299.0 / 7, trackpad: CGSize(width: 347, height: 183), panelRoom: 317),
     // today: 151, 259
     Row(phone: duoOuter, picture: CGSize(width: 484, height: 302), row1: (334, 384), button: 88, row2: (400, 462),
-        row3: (472, 516), cap: 72, trackpad: CGSize(width: 472, height: 168), panelRoom: 302),
+        row3: (472, 516), cap: 424.0 / 7, trackpad: CGSize(width: 472, height: 168), panelRoom: 302),
     // The real cover (the approved (c1): the phone's arrangement, narrower by the camera's strip):
     // the picture 366×228 the probe photographed.
     Row(phone: duoCover, picture: CGSize(width: 366, height: 228), row1: (260, 310), button: 64.4, row2: (326, 388),
-        row3: (398, 442), cap: 314.0 / 6, trackpad: CGSize(width: 354, height: 210), panelRoom: 344),
+        row3: (398, 442), cap: 306.0 / 7, trackpad: CGSize(width: 354, height: 210), panelRoom: 344),
 ]
 
 for row in table {
@@ -105,8 +106,8 @@ for row in table {
           l.strip == CGRect(x: 6, y: row.row2.0, width: size.width - 12, height: row.row2.1 - row.row2.0))
     check("\(n): row 3 at \(Int(row.row3.0))–\(Int(row.row3.1))",
           l.keys == CGRect(x: 14, y: row.row3.0, width: size.width - 28, height: row.row3.1 - row.row3.0))
-    check("\(n): six caps " + String(format: "%.1f", row.cap) + " wide, 44 tall, 8 apart",
-          l.caps.count == 6 && l.caps.enumerated().allSatisfy { i, c in
+    check("\(n): seven caps " + String(format: "%.1f", row.cap) + " wide, 44 tall, 8 apart, the last the arrows cap",
+          l.hasArrows && l.caps.count == 7 && l.caps.enumerated().allSatisfy { i, c in
               near(c, CGRect(x: 14 + CGFloat(i) * (row.cap + 8), y: row.row3.0, width: row.cap, height: 44)) })
     check("\(n): the trackpad \(Int(row.trackpad.width))×\(Int(row.trackpad.height)), to 16 pt from the bottom",
           l.trackpad == CGRect(x: 14, y: row.row3.1 + 10, width: row.trackpad.width, height: row.trackpad.height)
@@ -148,11 +149,19 @@ do {
           l.row1.minY - l.picture.maxY == 24 && (l.strip.minY + 6) - l.row1.maxY == 22)
 }
 
-// 320 pt (an iPhone SE or 13 mini with Display Zoom): the buttons 52, the caps 42 (as the Duo's outer
-// layout had them), the ruler's step 28 so it stays inside the row.
+// 320 pt (an iPhone SE or 13 mini with Display Zoom): the buttons 52, six caps of 42 (as the Duo's outer
+// layout had them: seven would be 35, so no arrows cap and no cross), the ruler's step 28 so it stays
+// inside the row. Seven caps from 364 pt up, 41.1 wide there.
 let narrow = L(size: CGSize(width: 320, height: 1000))
 check("320 wide: five buttons 52 wide", narrow.buttons.allSatisfy { near($0.width, 52) })
-check("320 wide: six caps 42 wide", narrow.caps.allSatisfy { near($0.width, 42) })
+check("320 wide: six caps 42 wide, no arrows cap, no cross", narrow.caps.count == 6 && narrow.caps.allSatisfy { near($0.width, 42) }
+      && !narrow.hasArrows && narrow.arrows(keyboardShown: false) == nil && narrow.arrows(keyboardShown: true) == nil)
+do {
+    let below = L(size: CGSize(width: 363, height: 800)), at = L(size: CGSize(width: 364, height: 800))
+    check("363 wide: six caps, no arrows cap", below.caps.count == 6 && !below.hasArrows && below.arrows(keyboardShown: false) == nil)
+    check("364 wide: seven caps 41.1 wide (288 ÷ 7), the arrows cap last", at.caps.count == 7 && at.hasArrows
+          && at.caps.allSatisfy { near($0.width, 288.0 / 7) } && at.arrows(keyboardShown: false) != nil)
+}
 check("320 wide: the ruler's step 28, its leading edge at the row's", near(narrow.rulerStep, 28) && near(narrow.ruler.minX, 14))
 let threeSixty = L(size: CGSize(width: 360, height: 1000))
 check("360 wide: the ruler's step 34", near(threeSixty.rulerStep, 34))
@@ -215,6 +224,35 @@ do {
     check("the Duo's outer display: the key row under any iPhone keyboard (216 pt and up)", l.keys.maxY > h - 216)
 }
 
+// MARK: - The arrows cross
+//
+// A 168 pt square (three 52 pt keys a side, 6 apart), its trailing edge at the row's (W − 14): centred
+// on the arrows cap would put it past the row's side on every width. With the keyboard down it stands
+// centred on the trackpad; with the keyboard up (it covers the trackpad) over the picture's bottom
+// edge, 8 pt inside it, and so above the keyboard on every phone.
+
+check("the cross is 168 pt square: three 52 pt keys a side, 6 apart", L.arrowsSide == 168)
+do {
+    let l = L(size: pro.container)
+    check("iPhone 18 Pro: the cross at (220, 546.5) on the trackpad, centred in it; at (220, 73) over the picture with the keyboard up",
+          l.arrows(keyboardShown: false) == CGRect(x: 220, y: 546.5, width: 168, height: 168)
+            && l.arrows(keyboardShown: true) == CGRect(x: 220, y: 73, width: 168, height: 168))
+    let s = L(size: se.container)
+    check("iPhone SE: the cross at (193, 455.5), inside its 183 pt trackpad; at (193, 56) with the keyboard up",
+          s.arrows(keyboardShown: false) == CGRect(x: 193, y: 455.5, width: 168, height: 168)
+            && s.arrows(keyboardShown: true) == CGRect(x: 193, y: 56, width: 168, height: 168))
+    let d = L(size: duoOuter.container)
+    check("the Duo's outer display: its 168 pt trackpad holds the cross exactly", d.arrows(keyboardShown: false) == d.trackpad.intersection(
+          CGRect(x: 500 - 14 - 168, y: 0, width: 168, height: 1000)))
+}
+for k in keyboardTable {
+    let l = L(size: k.phone.container), top = k.phone.screen.height - k.phone.keyboard! - k.phone.inset
+    let down = l.arrows(keyboardShown: false)!, up = l.arrows(keyboardShown: true)!
+    check("\(k.phone.name): the cross on the trackpad with the keyboard down, over the picture and above the keyboard with it up",
+          l.trackpad.contains(down) && near(down.midY, l.trackpad.midY) && near(up.maxY, l.picture.maxY - 8)
+            && l.picture.contains(up) && up.maxY < top)
+}
+
 // MARK: - Every width from 300 to 599 pt, every height from the width + 1 to 1,400
 
 /// Each rule over the whole grid is one case: it passes when every size keeps it, and a failure
@@ -234,15 +272,19 @@ let ordered = Rule("top to bottom: the picture, row 1, the strip, row 3, the tra
 let gaps = Rule("the gaps: 24 from the picture to row 1's buttons, 16 from them to the strip, 10 to row 3, 10 above the trackpad, 16 under it")
 let pictureRule = Rule("the picture at (8, 8), full width less 16, exactly ⌊(W − 16) ÷ 1.6⌋ tall while the trackpad keeps 120 pt, else the trackpad exactly 120 (the picture never below 0)")
 let buttonsRule = Rule("five equal buttons, 50 tall, 8 apart, from 14 to W − 14, each at least 44 wide")
-let capsRule = Rule("six equal caps, 44 tall, 8 apart, from 14 to W − 14; at least 44 wide from 332 pt up")
-let alignRule = Rule("the rows line up: Apps, the first thumbnail, esc and the trackpad at 14; Settings, shift and the trackpad end at W − 14; the strip from 6 to W − 6")
+let capsRule = Rule("equal caps, 44 tall, 8 apart, from 14 to W − 14: six below 364 pt (at least 44 wide from 332 up), seven from 364 up, the arrows cap last (at least 41 wide, 44 from 384 up)")
+let arrowsRule = Rule("the cross: none below 364 pt; from 364 up 168 square, its trailing edge at W − 14")
+let arrowsDownRule = Rule("the cross with the keyboard down: never past 16 pt above the bottom; inside the trackpad and centred on it where the trackpad is 168 pt or more")
+let arrowsUpRule = Rule("the cross with the keyboard up: its bottom 8 pt inside the picture's, never above the screen's top; inside the picture where it is 176 pt or more")
+let alignRule = Rule("the rows line up: Apps, the first thumbnail, esc and the trackpad at 14; Settings, the last cap and the trackpad end at W − 14; the strip from 6 to W − 6")
 let spanRule = Rule("the trackpad's span is its width ÷ 1.6")
 let rulerRule = Rule("the ruler over row 1, centred on Aa, 4 × step + 60 wide, inside the row, 36 a detent where it fits, less where not")
 let panelsRule = Rule("the drawer and the panel from 8 under row 1 to the trackpad's bottom, both across row 1, from 14 to W − 14")
 let anchorRule = Rule("the panel's anchor is its top-trailing corner")
 let dimRule = Rule("the dim covers everything but row 1's buttons, in two pieces")
 let menusRule = Rule("row 2 with the Mac's menus: the Menus button under Settings and as wide, 50 tall, centred in the strip's 62; the strip from 6 to 8 before it, a whole 80 pt thumbnail and its 8 pt ends in it")
-let rules = [inside, ordered, gaps, pictureRule, buttonsRule, capsRule, alignRule, spanRule, rulerRule, panelsRule, anchorRule, dimRule, menusRule]
+let rules = [inside, ordered, gaps, pictureRule, buttonsRule, capsRule, alignRule, spanRule, rulerRule, panelsRule, anchorRule, dimRule, menusRule,
+             arrowsRule, arrowsDownRule, arrowsUpRule]
 
 func within(_ r: CGRect, _ size: CGSize) -> Bool {
     r.minX >= -0.001 && r.minY >= -0.001 && r.maxX <= size.width + 0.001 && r.maxY <= size.height + 0.001 && r.width >= 0 && r.height >= 0
@@ -257,7 +299,7 @@ for w in 300...599 {
         gridSizes += 1
 
         let all = [l.picture, l.row1, l.strip, l.menus, l.stripBesideMenus, l.keys, l.trackpad, l.ruler, l.drawer, l.settings]
-            + l.buttons + l.caps + l.dim
+            + l.buttons + l.caps + l.dim + [l.arrows(keyboardShown: false), l.arrows(keyboardShown: true)].compactMap { $0 }
         inside.expect(all.allSatisfy { within($0, size) }, size, all.first { !within($0, size) }.map(str) ?? "")
 
         ordered.expect(l.picture.maxY <= l.row1.minY && l.row1.maxY <= l.strip.minY && l.strip.maxY <= l.keys.minY
@@ -282,13 +324,34 @@ for w in 300...599 {
                            && zip(b, b.dropFirst()).allSatisfy { near($1.minX - $0.maxX, 8) } && bw >= 44, size)
 
         let c = l.caps
-        let cw = (W - 68) / 6
-        capsRule.expect(c.count == 6 && c.allSatisfy { near($0.width, cw) && $0.height == 44 && $0.minY == l.keys.minY }
-                        && c[0].minX == 14 && near(c[5].maxX, W - 14)
-                        && zip(c, c.dropFirst()).allSatisfy { near($1.minX - $0.maxX, 8) } && (w < 332 || cw >= 44), size)
+        let seven = w >= 364
+        let count = seven ? 7 : 6
+        let cw = (W - 28 - CGFloat(count - 1) * 8) / CGFloat(count)
+        capsRule.expect(l.hasArrows == seven && c.count == count
+                        && c.allSatisfy { near($0.width, cw) && $0.height == 44 && $0.minY == l.keys.minY }
+                        && c[0].minX == 14 && near(c.last!.maxX, W - 14)
+                        && zip(c, c.dropFirst()).allSatisfy { near($1.minX - $0.maxX, 8) }
+                        && (seven ? cw >= 41 && (w < 384 || cw >= 44) : (w < 332 || cw >= 44)), size,
+                        "\(c.count) caps \(cw) wide")
+
+        let down = l.arrows(keyboardShown: false), up = l.arrows(keyboardShown: true)
+        if !seven {
+            arrowsRule.expect(down == nil && up == nil, size)
+        } else if let down, let up {
+            arrowsRule.expect([down, up].allSatisfy { $0.width == 168 && $0.height == 168 && near($0.maxX, W - 14) && $0.minX >= 14 }, size,
+                              "\(str(down)), \(str(up))")
+            arrowsDownRule.expect(down.maxY <= H - 16 + 0.001 && down.minY >= 0
+                                  && (l.trackpad.height < 168 || (l.trackpad.contains(down) && near(down.midY, l.trackpad.midY)))
+                                  && (l.trackpad.height >= 168 || near(down.maxY, H - 16)), size,
+                                  "\(str(down)), trackpad \(str(l.trackpad))")
+            arrowsUpRule.expect(near(up.minY, max(0, l.picture.maxY - 8 - 168)) && (l.picture.height < 176 || l.picture.contains(up)), size,
+                                "\(str(up)), picture \(str(l.picture))")
+        } else {
+            arrowsRule.expect(false, size, "no cross from 364 pt up")
+        }
 
         alignRule.expect(b[0].minX == 14 && l.strip.minX + L.stripInset == 14 && c[0].minX == 14 && l.trackpad.minX == 14
-                         && near(b[4].maxX, W - 14) && near(c[5].maxX, W - 14) && l.trackpad.maxX == W - 14
+                         && near(b[4].maxX, W - 14) && near(c.last!.maxX, W - 14) && l.trackpad.maxX == W - 14
                          && l.strip.minX == 6 && l.strip.maxX == W - 6 && l.strip.height == 62, size)
 
         spanRule.expect(near(l.trackpadSpan, l.trackpad.width / 1.6), size)

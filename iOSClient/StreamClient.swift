@@ -3102,9 +3102,9 @@ final class StreamClient: ObservableObject {
     //
     // Who moved the Mac's pointer last decides what the one sprite shows: the Mac (its own mouse, an
     // app warping it) or another device, and the sprite is the Mac's pointer where kind 26 says it is,
-    // over the stream; this device, and the sprite is its own only for the portrait trackpad (the
-    // Pencil's with Q2's flip), else nothing. This device's input makes it the one (on `queue`, in
-    // sendInput's block); a fresh report from the Mac (kind 26, on `queue` too) makes it the Mac's.
+    // over the stream; this device, and the sprite is its own only for the relative pointer, the
+    // portrait trackpad's or landscape's one-finger drag (the Pencil's with Q2's flip), else
+    // nothing. This device's input makes it the one (on `queue`, in sendInput's block); a fresh report from the Mac (kind 26, on `queue` too) makes it the Mac's.
     // `renderPointer` puts the result on screen.
 
     /// Hands the sprite what it shows now: the feed as it stands, this device's own pointer, the
@@ -3144,11 +3144,12 @@ final class StreamClient: ObservableObject {
     /// mid-stroke (PadCursor.catchUp). Any thread.
     var pointerFeedState: PointerFeedState { pointerFeed.current }
 
-    /// The laptop layout (inner or outer portrait), where the trackpad's pointer shows. Main thread.
+    /// Whether the relative pointer (the portrait trackpad's, landscape's one-finger drag) may show:
+    /// StreamScreen says true once, for every layout (PointerPresence.portrait). Main thread.
     func setPointerLayout(portrait: Bool) {
         guard presence.portrait != portrait else { return }
         presence.portrait = portrait
-        renderPointer()   // a rotation: the trackpad's arrow goes in landscape and comes back in portrait
+        renderPointer()
     }
 
     /// How many fingers are on the portrait pad; only Q1's flip reads it. Main thread.

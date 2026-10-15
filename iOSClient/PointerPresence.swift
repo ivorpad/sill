@@ -6,7 +6,8 @@ import Foundation
 // Sill is controlling the Mac, continue to hide the real pointer and only render the client side one
 // in portrait mode when the trackpad is used." So the one sprite shows the Mac's pointer while the Mac
 // (its own mouse or trackpad, or an app warping it) or another device moved it last, and this device's
-// own only on the portrait trackpad. The Mac tells where its pointer is with kind 26 (MacPointer),
+// own only on the portrait trackpad, and since 2026-10-15 on landscape's picture while one finger
+// drags the pointer from where it is (InputOverlayView.relativeDrag). The Mac tells where its pointer is with kind 26 (MacPointer),
 // sent to every device but the one moving it.
 //
 // Pure: Foundation and CoreGraphics only, so it is checked on its own with swiftc
@@ -16,16 +17,19 @@ import Foundation
 // • PointerFeedState (the network queue): who moved the pointer last as this device knows it, where
 //   the Mac's pointer is, the anchor, what this device sent in the last 3 s, and a hand-over's
 //   carry-over; PointerFeed keeps it under a lock for main to read.
-// • PadCursor (the portrait pad): where a stroke, and a move after the Mac moved the pointer,
-//   carry on from.
+// • PadCursor (the portrait pad, and landscape's relative drag): where a stroke, and a move after
+//   the Mac moved the pointer, carry on from.
+// • TapDrag (landscape's picture): which stroke is a tap then a drag, and when its button goes down.
 
 /// What the device's one pointer sprite shows (§7.2):
 ///
 ///     Who moved the pointer last             Layout      The sprite
 ///     the Mac, or another device             any         the Mac's pointer while it is over the stream
 ///     this device, the on-screen trackpad    portrait    this device's own, until another input takes over (Q1)
-///     this device, the on-screen trackpad    landscape   hidden
-///     this device, a finger on the stream,   any         hidden
+///     this device, one finger dragging on    landscape   the same, from `.trackpad` (`portrait` is true in
+///       the picture (`relativeDrag`)                     every layout: StreamScreen sets it)
+///     this device, a finger on the stream    any         hidden
+///       (a tap, a long press, a scroll),
 ///       typing, a hardware key, the iPad's
 ///       own trackpad or mouse
 ///     this device, the Pencil                any         hidden (Q2)
@@ -46,7 +50,10 @@ struct PointerPresence: Equatable {
     /// This device's own pointer (written only by StreamClient.setOwnPointer), and what drew it.
     var own: CGPoint?
     var origin: Origin = .none
-    /// The laptop layout: inner or outer portrait.
+    /// Whether the relative pointer (`.trackpad`) may show. Named for the laptop layout, where it once
+    /// alone did (inner or outer portrait); since landscape's picture drags the pointer from where it
+    /// is (2026-10-15), StreamScreen sets it true in every layout, and false is only the struct's own
+    /// default, the rule's other side, which the checks keep.
     var portrait = false
     /// Something streams (`client.active != .none`).
     var streaming = false
@@ -351,5 +358,52 @@ struct PadCursor: Equatable {
 
     static func clamped(_ p: CGPoint) -> CGPoint {
         CGPoint(x: min(max(p.x, 0), 1), y: min(max(p.y, 0), 1))
+    }
+}
+
+/// Landscape's picture (InputOverlayView's `relativeDrag`): which one-finger stroke is a tap and drag,
+/// and when its button may go down. A tap clicks where it lands at once, as it always has, so a finger
+/// that lands again soon after, close to it, and moves, drags from where that tap left the pointer,
+/// as a Mac trackpad's double-tap drag does: the left button down at the tap's point, the pointer
+/// following the finger's travel, the button up when it lifts. A candidate that lifts without moving
+/// is the tap recognizer's, a second click as before (a double click on the Mac).
+///
+/// The button's down waits until `downAfterClick` after the tap's click went out. The host counts a
+/// down within 0.35 s and 12 points of the last one as a double click (InputInjector's
+/// `multiClickInterval`), and the drag's down is at the tap's very point, so without the wait the
+/// drag would be a double-click drag: word by word in text, and a double click on a Finder icon or a
+/// title bar. A Mac trackpad's tap drag is a single press. The 0.1 s past the host's 0.35 is room
+/// for the network delivering the tap's down later than the drag's. Until the down goes, the sprite
+/// follows the finger and the Mac hears nothing. Pure; times in seconds of one clock (`UITouch`'s
+/// timestamps, `ProcessInfo.systemUptime`), points in the overlay's.
+struct TapDrag: Equatable {
+    /// How soon after the tap's click the finger must land again.
+    static let window = 0.3
+    /// How close to the tap it must land, in points: a finger anywhere else is a pointer move.
+    static let reach: CGFloat = 30
+    /// The least time from the tap's click to the drag's button down (the host's 0.35 s, and room).
+    static let downAfterClick = 0.45
+
+    /// The last one-finger tap's click: when it went out and where it landed. Nil before any.
+    private(set) var tapAt: Double?
+    private(set) var tapPoint = CGPoint.zero
+
+    /// A one-finger tap clicked at `point`, `now`.
+    mutating func tapped(at point: CGPoint, now: Double) {
+        tapAt = now
+        tapPoint = point
+    }
+
+    /// Whether a stroke whose first finger landed at `point`, `time`, with `fingers` down, drags
+    /// from the tap: one finger, within `window` of the click and `reach` of its point.
+    func drags(landing point: CGPoint, at time: Double, fingers: Int) -> Bool {
+        guard fingers == 1, let tapAt, time >= tapAt, time - tapAt <= Self.window else { return false }
+        return hypot(point.x - tapPoint.x, point.y - tapPoint.y) <= Self.reach
+    }
+
+    /// How long from `now` the drag's button down still waits (0: it may go now).
+    func downDelay(now: Double) -> Double {
+        guard let tapAt else { return 0 }
+        return max(0, tapAt + Self.downAfterClick - now)
     }
 }

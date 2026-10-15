@@ -3,10 +3,10 @@ import CoreGraphics
 /// Where everything goes on a phone held upright (Noah, 2026-09-27; docs/iphone-portrait-plan.md):
 /// the picture in a fixed 16:10 pane at the top, then row 1 (Apps, Aa, Keyboard, Desktop,
 /// Settings, widened to the row), row 2 (the window thumbnails), row 3 (esc, tab, ctrl, opt, cmd,
-/// shift), and the trackpad in everything left. Every rectangle is a function of the stream
-/// screen's size alone, the screen less its top safe-area inset down to its bottom edge (the stream
-/// screen ignores the bottom inset and the keyboard), so nothing moves when the streamed window
-/// changes shape (a 16:9 one gets black bars above and below) or the keyboard comes up (it covers
+/// shift and the arrows cap, whose cross floats over the trackpad), and the trackpad in everything
+/// left. Every rectangle is a function of the stream screen's size alone, the screen less its top
+/// safe-area inset down to its bottom edge (the stream screen ignores the bottom inset and the
+/// keyboard), so nothing moves when the streamed window changes shape (a 16:9 one gets black bars above and below) or the keyboard comes up (it covers
 /// the trackpad; row 1, with the Keyboard button, stays above it on every phone).
 ///
 /// `DuoLayout.outerPortrait` on an iPhone draws this (`DuoLayout.phoneArrangement`): every iPhone
@@ -58,8 +58,17 @@ struct PhonePortraitLayout: Equatable {
 
     /// Row 1, in the landscape bar's order.
     enum Button: Int, CaseIterable { case apps, textSize, keyboard, desktop, settings }
-    /// Row 3's caps: esc, tab, ctrl, opt, cmd, shift.
-    static let capCount = 6
+    /// Row 3's caps: esc, tab, ctrl, opt, cmd, shift, and the arrows cap that opens the cross.
+    static let capCount = 7
+    /// Row 3 without the arrows cap: on a screen narrower than `arrowsMinWidth` seven caps would be
+    /// under 41 pt wide (35 at 320 pt, an iPhone SE or 13 mini with Display Zoom), so it keeps the
+    /// six. Seven are 41.1 pt wide at 364, 42.7 at 375 (the SE, the 13 mini) and 52 at 440.
+    static let capCountWithoutArrows = 6
+    static let arrowsMinWidth: CGFloat = 364
+    /// The arrows cross: three keys a side, `arrowGap` apart, its corners empty.
+    static let arrowKey: CGFloat = 52
+    static let arrowGap: CGFloat = 6
+    static var arrowsSide: CGFloat { 3 * arrowKey + 2 * arrowGap }
 
     /// The stream screen's size, which everything below is measured in (origin at its top left).
     let size: CGSize
@@ -79,6 +88,8 @@ struct PhonePortraitLayout: Equatable {
     /// Row 3.
     let keys: CGRect
     let caps: [CGRect]
+    /// Whether row 3 ends in the arrows cap (`caps.last`).
+    let hasArrows: Bool
     let trackpad: CGRect
     /// The pad's vertical motion is measured against this, not its height: its width ÷ 1.6, so a
     /// stroke moves the pointer as far down as across on a 16:10 picture, however tall the pad is.
@@ -130,9 +141,10 @@ struct PhonePortraitLayout: Equatable {
                        width: settingsButton.width, height: Self.buttonHeight)
         stripBesideMenus = CGRect(x: strip.minX, y: strip.minY, width: max(0, menus.minX - Self.gap - strip.minX), height: strip.height)
 
-        // Row 3: six equal caps, `gap` apart.
+        // Row 3: seven equal caps, `gap` apart, or six below `arrowsMinWidth`.
         keys = CGRect(x: Self.side, y: strip.maxY + Self.rowGap, width: rowWidth, height: Self.capHeight)
-        caps = Self.split(keys, count: Self.capCount, gap: Self.gap)
+        hasArrows = width >= Self.arrowsMinWidth
+        caps = Self.split(keys, count: hasArrows ? Self.capCount : Self.capCountWithoutArrows, gap: Self.gap)
 
         // The trackpad: the rest, to `bottom` above the screen's edge.
         let padTop = keys.maxY + Self.rowGap
@@ -156,6 +168,28 @@ struct PhonePortraitLayout: Equatable {
 
         dim = [CGRect(x: 0, y: 0, width: width, height: row1.minY),
                CGRect(x: 0, y: row1.maxY, width: width, height: max(0, height - row1.maxY))]
+    }
+
+    /// The arrows cross while it is open, a square `arrowsSide` wide (168 pt), centred across on the
+    /// arrows cap but inside the rows' sides, which on every width puts its trailing edge at the
+    /// row's, under the thumb. With the keyboard down it stands on the trackpad, centred in it, and
+    /// never past the screen's bottom margin: on a trackpad under 168 pt (the shortest screens, down
+    /// to its 120) it rides up over the key row rather than off the screen. With the keyboard up the
+    /// keyboard covers the trackpad, so the cross goes over the picture's bottom edge instead, 8 pt
+    /// inside it (the only room left; it covers part of the picture while it is open). Nil without
+    /// the arrows cap.
+    func arrows(keyboardShown: Bool) -> CGRect? {
+        guard hasArrows, let cap = caps.last else { return nil }
+        let side = Self.arrowsSide
+        let x = min(max(cap.midX - side / 2, Self.side), max(Self.side, size.width - Self.side - side))
+        let y: CGFloat
+        if keyboardShown {
+            y = max(0, picture.maxY - Self.margin - side)
+        } else {
+            let centred = trackpad.midY - side / 2
+            y = max(0, min(max(centred, trackpad.minY), size.height - Self.bottom - side))
+        }
+        return CGRect(x: x, y: y, width: side, height: side)
     }
 
     /// `count` equal parts of `row`, `gap` apart, filling it.

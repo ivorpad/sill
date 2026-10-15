@@ -503,5 +503,35 @@ do {
     check(pad3.cursor == pt(0.50, 0.40), "rest: another device driving on, the finger's move goes on from its latest position")
 }
 
+// MARK: Landscape's tap drag (TapDrag)
+
+do {
+    var t = TapDrag()
+    check(!t.drags(landing: pt(100, 100), at: 1, fingers: 1) && t.downDelay(now: 1) == 0, "no tap yet: no drag, nothing to wait for")
+    t.tapped(at: pt(100, 100), now: 10)
+    check(t.drags(landing: pt(100, 100), at: 10.2, fingers: 1), "a finger on the tap's point 0.2 s after its click: the drag")
+    check(t.drags(landing: pt(100, 100), at: 10.29, fingers: 1) && !t.drags(landing: pt(100, 100), at: 10.31, fingers: 1),
+          "the window: 0.3 s, and not past it")
+    check(t.drags(landing: pt(130, 100), at: 10.1, fingers: 1) && t.drags(landing: pt(118, 124), at: 10.1, fingers: 1)
+          && !t.drags(landing: pt(131, 100), at: 10.1, fingers: 1) && !t.drags(landing: pt(100, 69), at: 10.1, fingers: 1),
+          "the reach: 30 pt around the tap, and not past it")
+    check(!t.drags(landing: pt(100, 100), at: 10.1, fingers: 2), "two fingers landing together: a scroll or a pinch, never the drag")
+    check(!t.drags(landing: pt(100, 100), at: 9.9, fingers: 1), "a finger from before the tap's click: not its drag")
+    // The down waits until 0.45 s after the tap's click, past the host's 0.35 s double click.
+    check(abs(t.downDelay(now: 10.25) - 0.2) < 1e-9 && t.downDelay(now: 10.45) == 0 && t.downDelay(now: 11) == 0,
+          "the drag's down: 0.45 s after the click at the earliest")
+    check(TapDrag.downAfterClick > 0.35, "the down's wait is past the host's double-click interval (0.35 s)")
+    // A second tap moves both.
+    t.tapped(at: pt(300, 50), now: 20)
+    check(t.drags(landing: pt(305, 55), at: 20.1, fingers: 1) && !t.drags(landing: pt(100, 100), at: 20.1, fingers: 1)
+          && abs(t.downDelay(now: 20.3) - 0.15) < 1e-9, "the last tap is the one a drag follows")
+    // The cursor the drag starts from: the tap's point, as the feed's anchor has it, and the finger's
+    // travel at the pad's 1.25 frames a swipe across the picture.
+    var pad = PadCursor()
+    pad.adopt(anchor: pt(0.3, 0.6), reseeds: 0)
+    pad.move(dx: 100.0 / 800 * 1.25, dy: -50.0 / 500 * 1.25)
+    check(abs(pad.cursor.x - 0.45625) < 1e-12 && abs(pad.cursor.y - 0.475) < 1e-12, "a drag of 100, -50 pt across an 800×500 picture")
+}
+
 print("\(checks) checks, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

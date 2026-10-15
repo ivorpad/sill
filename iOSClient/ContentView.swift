@@ -108,6 +108,10 @@ struct ContentView: View {
 ///   keyboard toggles as the Keyboard button does (the Settings panel put away, then the input
 ///   view's first responder toggled): a stand-in for a tap, since no gate drives the UI. In the
 ///   normal app too, and in the mock (where a real keyboard then upsets the fake screen).
+/// * `-SillArrows 1` — on a phone held upright, start with the arrows cross open (its cap lit), as a
+///   tap on the key row's arrows cap opens it; with `-SillKeyboard 1` it stands where it goes with
+///   the keyboard up, over the picture's bottom edge. Also in the normal app. A screen narrower than
+///   364 pt has no arrows cap, and the argument does nothing there.
 /// * `-SillInputTest 1` — with `-SillConnect` on this Mac's loopback (127.0.0.1, ::1, [::1] or
 ///   localhost), once per launch, in the portrait key row's and trackpad's own code: the key row
 ///   taps cmd, esc, shift and ctrl through its caps' action 1.0, 1.4, 1.8 and 2.0 s after it shows

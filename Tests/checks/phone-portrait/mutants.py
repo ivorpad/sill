@@ -18,8 +18,9 @@ MUTANTS = {
     "M6 row 1's width without its gaps": ("buttons = Self.split(row1, count: Button.allCases.count, gap: Self.gap)",
                                           "buttons = Self.split(row1, count: Button.allCases.count, gap: 0)"),
     "M7 one gap too many in a row": ("(row.width - CGFloat(count - 1) * gap)", "(row.width - CGFloat(count) * gap)"),
-    "M8 the caps' gap 10": ("caps = Self.split(keys, count: Self.capCount, gap: Self.gap)", "caps = Self.split(keys, count: Self.capCount, gap: 10)"),
-    "M9 seven caps": ("static let capCount = 6", "static let capCount = 7"),
+    "M8 the caps' gap 10": ("count: hasArrows ? Self.capCount : Self.capCountWithoutArrows, gap: Self.gap)",
+                            "count: hasArrows ? Self.capCount : Self.capCountWithoutArrows, gap: 10)"),
+    "M9 eight caps": ("static let capCount = 7", "static let capCount = 8"),
     "M10 the trackpad to the edge": ("height: max(0, height - Self.bottom - padTop))", "height: max(0, height - padTop))"),
     "M11 the span as the pad's height": ("trackpadSpan = trackpad.width / Self.aspect", "trackpadSpan = trackpad.height"),
     "M12 the ruler's step never reduced": ("rulerStep = max(0, min(Self.maxRulerStep, room / Self.rulerSpans))", "rulerStep = Self.maxRulerStep"),
@@ -46,6 +47,15 @@ MUTANTS = {
     "M29 the Menus button under Aa": ("let settingsButton = buttons[Button.settings.rawValue]", "let settingsButton = buttons[Button.textSize.rawValue]"),
     "M30 the strip running under the Menus button": ("width: max(0, menus.minX - Self.gap - strip.minX)", "width: strip.width"),
     "M31 the Menus button at the strip's top": ("y: strip.minY + (Self.stripHeight - Self.buttonHeight) / 2,", "y: strip.minY,"),
+    "M32 the arrows cap from 360 pt": ("static let arrowsMinWidth: CGFloat = 364", "static let arrowsMinWidth: CGFloat = 360"),
+    "M33 the arrows cap on every width": ("hasArrows = width >= Self.arrowsMinWidth", "hasArrows = true"),
+    "M34 the cross without its gaps": ("static var arrowsSide: CGFloat { 3 * arrowKey + 2 * arrowGap }", "static var arrowsSide: CGFloat { 3 * arrowKey }"),
+    "M35 the cross centred on the cap, past the row's side": ("let x = min(max(cap.midX - side / 2, Self.side), max(Self.side, size.width - Self.side - side))",
+                                                              "let x = cap.midX - side / 2"),
+    "M36 the cross on the trackpad with the keyboard up": ("y = max(0, picture.maxY - Self.margin - side)", "y = max(0, trackpad.minY)"),
+    "M37 the cross at the trackpad's top": ("let centred = trackpad.midY - side / 2", "let centred = trackpad.minY"),
+    "M38 the cross off the bottom on a short trackpad": ("y = max(0, min(max(centred, trackpad.minY), size.height - Self.bottom - side))",
+                                                         "y = max(trackpad.minY, min(centred, size.height - Self.bottom - side))"),
 }
 caught = 0
 for name, (old, new) in MUTANTS.items():

@@ -54,6 +54,15 @@ MUTANTS = [
     ("the last 3 s unbounded", "        if recent.count >= Self.recentLimit { recent.removeFirst(recent.count - Self.recentLimit + 1) }\n", ""),
     # The pad
     ("no mid-stroke re-seed", "        guard reseeds != reseedsSeen else { return }\n", "        if true { return }\n"),
+    # Landscape's tap drag
+    ("the tap drag's window ignored", "time - tapAt <= Self.window else { return false }", "true else { return false }"),
+    ("a tap drag with two fingers", "guard fingers == 1, let tapAt,", "guard fingers >= 1, let tapAt,"),
+    ("a tap drag from anywhere", "        return hypot(point.x - tapPoint.x, point.y - tapPoint.y) <= Self.reach\n", "        return true\n"),
+    ("a tap drag before its tap", "let tapAt, time >= tapAt, time - tapAt", "let tapAt, time - tapAt"),
+    ("the drag's down at once", "        return max(0, tapAt + Self.downAfterClick - now)\n", "        return 0\n"),
+    ("the drag's down within the host's double click", "static let downAfterClick = 0.45", "static let downAfterClick = 0.3"),
+    ("a tap remembered at the first only", "        tapAt = now\n        tapPoint = point\n", "        if tapAt == nil { tapAt = now }\n        tapPoint = point\n"),
+    ("a tap's point never kept", "        tapAt = now\n        tapPoint = point\n", "        tapAt = now\n"),
     ("a re-seed at every move", "        guard reseeds != reseedsSeen else { return }\n", ""),
     ("a stroke ignores the anchor", "        if let anchor { cursor = Self.clamped(anchor) }\n", ""),
     ("the pad's cursor unclamped", "cursor = Self.clamped(CGPoint(x: Double(cursor.x) + dx, y: Double(cursor.y) + dy))",

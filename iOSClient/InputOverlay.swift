@@ -7,6 +7,11 @@ import StreamProtocol
 /// pointer goes, and the Apple Pencil is the mouse. Everything leaves here as an `InputEvent` whose
 /// position is a fraction of the *video frame*, not of this view — the video is drawn aspect-fit by
 /// `HEVCDisplayView`, so the letterbox has to be taken out before normalizing.
+///
+/// Landscape's picture (`relativeDrag`, set by StreamScreen alone) is a hybrid: a tap and a long
+/// press stay direct, but one finger dragging moves the pointer from where it is, as a trackpad does,
+/// and a tap then a drag drags (TapDrag). The picture in the halves and on a phone held upright, the
+/// Pencil and the iPad's own trackpad or mouse are direct everywhere.
 final class InputOverlayView: UIView, UIKeyInput {
     /// Pixel size of the streamed frame. Zero until the host's parameter sets arrive; input is
     /// ignored until then, since there is nothing on screen to aim at.
@@ -56,6 +61,43 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// with one finger stays a pointer move if a second lands.
     private var pointerPan = false
 
+    // Landscape's relative drag (`relativeDrag`).
+
+    /// One finger dragging on the picture moves the Mac's pointer from where it is by the finger's
+    /// travel, instead of to the finger, and a tap then a drag drags (`moveRelative`). Taps, the long
+    /// press, two fingers, three, the Pencil and the iPad's own pointer are as without it. Set by
+    /// StreamScreen's landscape picture only: the picture over the portrait trackpad stays direct,
+    /// the pad being the relative pointer there.
+    var relativeDrag = false
+    /// The feed's anchor and re-seeds (`StreamClient.pointerFeedState`), so a drag carries on from
+    /// where the pointer is: where the Mac's arrow shows, or where this device last put it (a tap,
+    /// the portrait pad before a rotation). Read only with `relativeDrag`.
+    var feed: () -> (anchor: CGPoint?, reseeds: Int) = { (nil, 0) }
+    /// The relative pointer: the portrait pad's cursor and its re-seed rules (PadCursor), the
+    /// finger's travel measured against the picture as drawn (zoomed or not) at the pad's
+    /// `TrackpadSurface.travel`, so a swipe across the picture moves the pointer 1.25 of it.
+    private var pad = PadCursor()
+    /// The last tap, and whether this stroke's finger landed as its drag (decided as it lands, in
+    /// `touchesBegan`, before any recognizer has recognized).
+    private var tapDrag = TapDrag()
+    private var dragCandidate = false
+    /// The tap drag's left button: the down waiting for `TapDrag.downAfterClick`, down, or up.
+    private var dragDownPending: DispatchWorkItem?
+    private var dragDown = false
+    /// Where the drag's button goes down (the cursor as the drag began: the tap's point), a fraction
+    /// of the frame; and that the finger lifted while the down was still waiting, so the up follows it.
+    private var dragStart = CGPoint.zero
+    private var dragLiftedEarly = false
+    /// Pan translation already turned into pointer travel, and the touches it was measured with: a
+    /// finger joining or leaving moves the centroid, which is a rebase, not travel.
+    private var relativeTranslation: CGPoint = .zero
+    private var relativeTouches = 0
+    /// The long press, which a drag's candidate must not turn into a right click.
+    private weak var longPressRecognizer: UILongPressGestureRecognizer?
+    /// Arming and releasing the tap drag, as the portrait pad's press-and-hold drag does (an iPhone's
+    /// Taptic Engine; an iPad has none, and every call is a silent no-op there).
+    private let dragHaptic = UIImpactFeedbackGenerator(style: .rigid)
+
     /// The picture under this view, whose `zoom` the pinch changes and every touch is mapped through.
     /// Same frame as this view (StreamScreen's and PortraitStreamScreen's ZStacks).
     weak var display: HEVCDisplayView?
@@ -93,6 +135,7 @@ final class InputOverlayView: UIView, UIKeyInput {
         longPress.minimumPressDuration = 0.45
         longPress.allowedTouchTypes = directOnly
         addGestureRecognizer(longPress)
+        longPressRecognizer = longPress
 
         // One finger moves the Mac's pointer (`movePointer`); two scroll, the Mac getting the
         // content delta, not a drag, or move a zoomed picture (`moveZoomed`).
@@ -126,6 +169,8 @@ final class InputOverlayView: UIView, UIKeyInput {
         // (StrokeObserver, TrackpadGestures). It only watches: it takes no touch from the
         // recognizers above and delays none.
         scrollPan = pan
+        // No stroke goes silent while the tap drag holds the button, which must still come up.
+        strokes.holding = { [weak self] in self.map { $0.dragDown || $0.dragDownPending != nil } ?? false }
         strokes.onSilenced = { [weak self] in self?.strokeSilenced() }
         strokes.onGesture = { [weak self] gesture, fingers in _ = self?.sendGesture(gesture, fingers) }
         addGestureRecognizer(strokes)
@@ -169,7 +214,10 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// wherever the last event left it, and hover state (menus, tooltips) follows it.
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard !strokes.silent else { return }
-        tap(at: gesture.location(in: self))
+        let point = gesture.location(in: self)
+        tap(at: point)
+        // Landscape: a finger landing again here soon after drags from this tap (TapDrag).
+        if relativeDrag { tapDrag.tapped(at: point, now: ProcessInfo.processInfo.systemUptime) }
     }
 
     /// A finger's tap at `point`, in this view: the pointer goes there, then clicks.
@@ -198,8 +246,9 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// positive dy).
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard !strokes.silent else { return }
-        // One finger moves the Mac's pointer; zoomed in, two fingers move the picture.
-        if movePointer(gesture) || moveZoomed(gesture) { return }
+        // One finger moves the Mac's pointer (from where it is, on landscape's picture); zoomed in,
+        // two fingers move the picture.
+        if (relativeDrag ? moveRelative(gesture) : movePointer(gesture)) || moveZoomed(gesture) { return }
         let rect = videoRect
         switch gesture.state {
         case .began:
@@ -283,6 +332,138 @@ final class InputOverlayView: UIView, UIKeyInput {
         }
     }
 
+    // MARK: - Relative drag (landscape)
+
+    /// Landscape's one-finger pan (`relativeDrag`): the Mac's pointer moves from where it is by the
+    /// finger's travel, no button down, and this device's pointer shows there, as the portrait pad's
+    /// does (`.trackpad`). A stroke that landed as a tap's drag (`dragCandidate`) holds the left button
+    /// down while it moves (`beginDrag`). The pan's ~10 pt of hysteresis is a dead start: the pointer
+    /// moves once the finger has gone that far, and a stroke's travel is 10 pt short (the touch rig:
+    /// 110 of 120 pt), which also keeps a tap from nudging it. The portrait pad's FingerTracker is the
+    /// way to remove it if it shows on the glass. The picture keeps following the
+    /// pointer when zoomed (`followPaused` stays off): the finger is not over the pointer here, so
+    /// nothing under it moves. Returns true when it took this callback.
+    private func moveRelative(_ gesture: UIPanGestureRecognizer) -> Bool {
+        switch gesture.state {
+        case .began:
+            // Afresh each pan: one a stroke's silence cut short never heard its end.
+            pointerPan = false
+            guard gesture.numberOfTouches == 1 else { return false }
+            momentum.stop()
+            pointerPan = true
+            relativeTouches = 1
+            relativeTranslation = gesture.translation(in: self)
+            if dragCandidate { beginDrag() }
+            travel(relativeTranslation)
+            return true
+        case .changed:
+            guard pointerPan else { return false }
+            let translation = gesture.translation(in: self)
+            defer { relativeTranslation = translation }
+            // A finger joined or left: the centroid jumped, so rebase rather than jolt the pointer.
+            guard gesture.numberOfTouches == relativeTouches else {
+                relativeTouches = gesture.numberOfTouches
+                return true
+            }
+            travel(CGPoint(x: translation.x - relativeTranslation.x, y: translation.y - relativeTranslation.y))
+            return true
+        default:
+            guard pointerPan else { return false }
+            pointerPan = false
+            // A lift can carry the stroke's last travel, which no `.changed` reported.
+            if gesture.state == .ended, gesture.numberOfTouches == relativeTouches {
+                let translation = gesture.translation(in: self)
+                travel(CGPoint(x: translation.x - relativeTranslation.x, y: translation.y - relativeTranslation.y))
+            }
+            relativeTranslation = .zero
+            relativeTouches = 0
+            endDrag(lifted: gesture.state == .ended)
+            return true
+        }
+    }
+
+    /// The cursor moves by a finger's travel in this view's points, measured against the picture as
+    /// drawn; the sprite follows at touch rate, and the Mac with it unless the drag's down is still
+    /// waiting (then the Mac hears the cursor once the button is down, `pressDragButton`).
+    private func travel(_ d: CGPoint) {
+        let rect = videoRect
+        guard rect.width > 0, rect.height > 0, d != .zero else { return }
+        catchUp()
+        pad.move(dx: Double(d.x / rect.width * TrackpadSurface.travel),
+                 dy: Double(d.y / rect.height * TrackpadSurface.travel))
+        setOwnPointer(pad.cursor, .trackpad)
+        guard dragDownPending == nil else { return }
+        send(.pointer(.move, x: pad.cursor.x, y: pad.cursor.y))
+    }
+
+    /// A stroke's first finger: the cursor carries on from where the pointer is now (PadCursor.adopt).
+    private func adoptAnchor() {
+        let f = feed()
+        pad.adopt(anchor: f.anchor, reseeds: f.reseeds)
+    }
+
+    /// Before the cursor is read: from the anchor when the Mac or another device took the pointer,
+    /// or moved it on, since this view last looked (PadCursor.catchUp).
+    private func catchUp() {
+        let f = feed()
+        pad.catchUp(anchor: f.anchor, reseeds: f.reseeds)
+    }
+
+    /// The tap drag begins as its finger starts to move: the button goes down at the cursor (where
+    /// the tap left the pointer), now or once `TapDrag.downAfterClick` has passed since the tap's
+    /// click, so the Mac never counts it as that click's second.
+    private func beginDrag() {
+        dragCandidate = false
+        catchUp()
+        dragStart = pad.cursor
+        dragLiftedEarly = false
+        dragHaptic.impactOccurred(intensity: 1.0)
+        let wait = tapDrag.downDelay(now: ProcessInfo.processInfo.systemUptime)
+        guard wait > 0 else { pressDragButton(); return }
+        let press = DispatchWorkItem { [weak self] in self?.pressDragButton() }
+        dragDownPending = press
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: press)
+    }
+
+    /// The drag's down at its start, then the pointer to where the cursor has got to meanwhile; and
+    /// the up straight after when the finger already lifted.
+    private func pressDragButton() {
+        dragDownPending = nil
+        dragDown = true
+        send(.pointer(.leftDown, x: dragStart.x, y: dragStart.y))
+        if pad.cursor != dragStart { send(.pointer(.move, x: pad.cursor.x, y: pad.cursor.y)) }
+        if dragLiftedEarly { releaseDragButton() }
+    }
+
+    /// The drag's finger lifted (`lifted`) or the system took it: the button comes up where the
+    /// cursor is. A lift while the down still waits lets it go, then the up; a cancel then sends
+    /// nothing at all.
+    private func endDrag(lifted: Bool) {
+        dragCandidate = false
+        if let press = dragDownPending {
+            if lifted { dragLiftedEarly = true } else { press.cancel(); dragDownPending = nil }
+            return
+        }
+        releaseDragButton()
+    }
+
+    private func releaseDragButton() {
+        guard dragDown else { return }
+        dragDown = false
+        dragLiftedEarly = false
+        dragHaptic.impactOccurred(intensity: 0.5)
+        send(.pointer(.leftUp, x: pad.cursor.x, y: pad.cursor.y))
+    }
+
+    /// A tap drag's finger, until it moves: never the long press's right click. The tap stays free to
+    /// click (a double click, when the finger lifts without moving); one held still neither drags
+    /// nor right-clicks until it moves, and clicks where it is if it lifts instead (the touch rig,
+    /// 2026-10-15: a click 0.6 s on, a single one on the Mac).
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === longPressRecognizer, dragCandidate { return false }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
     /// A two-finger double tap: back to the fitted picture when zoomed, else `PictureZoom.tapScale`
     /// about the point between the fingers. Animated, as the picture jumps otherwise.
     @objc private func handleZoomTap(_ gesture: UITapGestureRecognizer) {
@@ -361,7 +542,14 @@ final class InputOverlayView: UIView, UIKeyInput {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { momentum.stop(); releaseForwardedKeys() }
+        if window == nil {
+            momentum.stop()
+            releaseForwardedKeys()
+            // A tap drag taken away mid-stroke: a waiting down never goes, a button down comes up.
+            dragDownPending?.cancel()
+            dragDownPending = nil
+            releaseDragButton()
+        }
         #if DEBUG
         if window != nil {
             InputScript.overlay = self
@@ -432,6 +620,7 @@ final class InputOverlayView: UIView, UIKeyInput {
         // before the Pencil clicks on content that is still sliding).
         momentum.stop()
         guard let touch = Self.pointerTouch(in: touches) else {
+            if relativeDrag { fingersLanded(touches, with: event) }
             super.touchesBegan(touches, with: event); return
         }
         let point = touch.location(in: self)
@@ -440,6 +629,23 @@ final class InputOverlayView: UIView, UIKeyInput {
         // A trackpad's secondary click (two fingers, or right button) is a right click on the Mac.
         pointerButtonIsSecondary = touch.type == .indirectPointer && (event?.buttonMask.contains(.secondary) ?? false)
         sendPointer(pointerButtonIsSecondary ? .rightDown : .leftDown, at: point, clamped: false)
+    }
+
+    /// Landscape: a stroke's first finger carries on from the pointer's anchor, and is a tap's drag
+    /// when it lands soon after a tap, close to it (TapDrag). Any further finger before the drag has
+    /// begun makes the stroke something else (a scroll, a pinch).
+    private func fingersLanded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let landed = touches.filter { $0.type == .direct }
+        guard let first = landed.first else { return }
+        let down = event?.touches(for: self)?
+            .filter { $0.type == .direct && $0.phase != .ended && $0.phase != .cancelled }.count ?? landed.count
+        guard down == landed.count else { dragCandidate = false; return }
+        // A quick drag whose down still waits (its finger lifted already): it goes now, with its up,
+        // so this stroke's travel never joins it.
+        if let press = dragDownPending { press.cancel(); pressDragButton() }
+        adoptAnchor()
+        dragCandidate = tapDrag.drags(landing: first.location(in: self), at: first.timestamp, fingers: down)
+        if dragCandidate { dragHaptic.prepare() }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -645,6 +851,10 @@ struct InputOverlay: UIViewRepresentable {
     var onModifiersConsumed: () -> Void = {}
     /// `StreamClient.sendGesture`; see `InputOverlayView.sendGesture`.
     var sendGesture: (TrackpadGestures.Gesture, Int) -> Bool = { _, _ in false }
+    /// Landscape's picture: one finger drags the pointer from where it is (`InputOverlayView.relativeDrag`).
+    var relativeDrag = false
+    /// `StreamClient.pointerFeedState`'s anchor and re-seeds; see `InputOverlayView.feed`.
+    var feed: () -> (anchor: CGPoint?, reseeds: Int) = { (nil, 0) }
 
     func makeUIView(context: Context) -> InputOverlayView {
         let view = InputOverlayView(frame: .zero)
@@ -659,6 +869,8 @@ struct InputOverlay: UIViewRepresentable {
         uiView.setOwnPointer = setOwnPointer
         uiView.latchedModifiers = latchedModifiers
         uiView.sendGesture = sendGesture
+        uiView.relativeDrag = relativeDrag
+        uiView.feed = feed
         // Called straight from a UIKit text-input callback, never from inside a SwiftUI update,
         // so writing the binding here needs no hop.
         uiView.onModifiersConsumed = onModifiersConsumed

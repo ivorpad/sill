@@ -179,7 +179,27 @@ func scenarios(_ c: CGPoint) -> [(String, [Step])] {
     out.append(("4-finger swipe up, landing 16 ms apart", Gesture.swipe(4, at: c, dx: 0, dy: -180, frames: 10)))
     out.append(("5-finger swipe up, landing 16 ms apart", Gesture.swipe(5, at: c, dx: 0, dy: -180, frames: 10)))
     out.append(("3-finger swipe up then cancelled mid-way", Array(Gesture.swipe(3, at: c, dx: 0, dy: -180, frames: 10).prefix(8)) + [.cancel]))
-    return out + reviewScenarios(c, nudge: nudge)
+    return out + reviewScenarios(c, nudge: nudge) + tapDragScenarios(c)
+}
+
+/// A tap, then one finger again (landscape's tap drag, InputOverlayView.relativeDrag, 2026-10-15): on
+/// time and close, so a drag, quick (lifting before the button's down may go) and slow; a double tap;
+/// one held still; one too late and one too far, so pointer moves.
+func tapDragScenarios(_ c: CGPoint) -> [(String, [Step])] {
+    let tap = Gesture.tap(1, at: c)
+    return [
+        ("tap, then 0.15 s later a finger drags right 120 over 0.2 s", tap + [.wait(9)] + Gesture.swipe(1, at: c, dx: 120, dy: 0, frames: 12)),
+        ("tap, then 0.15 s later a finger drags right 120, down 60 over 0.67 s", tap + [.wait(9)] + Gesture.swipe(1, at: c, dx: 120, dy: 60, frames: 40)),
+        ("tap, then 0.15 s later a finger rests 0.6 s, then drags right 120", tap + [.wait(9)] + Gesture.swipe(1, at: c, dx: 120, dy: 0, frames: 20, hold: 36)),
+        ("double tap, 0.15 s apart", tap + [.wait(9)] + tap),
+        ("tap, then 0.15 s later a finger rests 0.6 s and lifts", tap + [.wait(9)] + Gesture.tap(1, at: c, holdFrames: 36)),
+        ("tap, then 0.5 s later a finger drags right 120", tap + [.wait(30)] + Gesture.swipe(1, at: c, dx: 120, dy: 0, frames: 20)),
+        ("tap, then 0.15 s later a finger 60 pt away drags right 120", tap + [.wait(9)] + Gesture.swipe(1, at: CGPoint(x: c.x + 60, y: c.y), dx: 120, dy: 0, frames: 20)),
+        ("tap, then 0.15 s later a finger drags right 120, a 2nd lands half-way, a 3rd after", tap + [.wait(9), .begin([c])]
+            + (1...10).map { .move([CGPoint(x: c.x + CGFloat($0) * 6, y: c.y)]) } + [.begin([CGPoint(x: c.x + 60, y: c.y + 70)])]
+            + (1...10).map { .move([CGPoint(x: c.x + 60 + CGFloat($0) * 6, y: c.y), CGPoint(x: c.x + 60 + CGFloat($0) * 6, y: c.y + 70)]) }
+            + [.begin([CGPoint(x: c.x + 120, y: c.y + 140)]), .wait(6), .end([0]), .end([0]), .end([0])]),
+    ]
 }
 
 /// The review's strokes (2026-09-27): fingers placed slowly, a thumb resting on the glass, a pinch led by
@@ -426,6 +446,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 final class Root: UIViewController {
+    /// RIG_RELATIVE: the feed's anchor, this device's last pointer event (none at the start).
+    static var anchor: CGPoint?
     let trackpad = TrackpadSurface(frame: .zero)
     let overlay = InputOverlayView(frame: .zero)
     /// RIG_REPLAY: the overlay alone, over the whole window, as the trace's canvas was.
@@ -450,6 +472,21 @@ final class Root: UIViewController {
         trackpad.send = { RigLog.log("trackpad send \(describe($0))") }
         overlay.send = { RigLog.log("overlay  send \(describe($0))") }
         overlay.videoSize = CGSize(width: 1512, height: 948)
+        #if RELATIVE
+        // RIG_RELATIVE=1: the overlay as landscape's picture (relativeDrag). The feed as StreamClient
+        // keeps it for a device alone with its Mac: the anchor is this device's last pointer event.
+        if ProcessInfo.processInfo.environment["RIG_RELATIVE"] == "1" {
+            overlay.relativeDrag = true
+            overlay.send = { e in
+                if case .pointer(_, let x, let y) = e { Root.anchor = CGPoint(x: x, y: y) }
+                RigLog.log("overlay  send \(describe(e))")
+            }
+            overlay.feed = { (Root.anchor, 0) }
+            overlay.setOwnPointer = { p, o in
+                RigLog.log("overlay  sprite " + (p.map { "(\(f(Double($0.x))),\(f(Double($0.y))))" } ?? "none") + " \(o)")
+            }
+        }
+        #endif
         #if GESTURES
         let on = ProcessInfo.processInfo.environment["RIG_SWITCH"] != "off"
         trackpad.sendGesture = { g, n in RigLog.log("trackpad gesture \(g.rawValue) fingers \(n)" + (on ? "" : " (switch off: not sent)")); return on }
@@ -492,6 +529,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         print("RIG surfaces: with the gestures, switch \(ProcessInfo.processInfo.environment["RIG_SWITCH"] == "off" ? "off" : "on")")
         #else
         print("RIG surfaces: without the gestures")
+        #endif
+        #if RELATIVE
+        print("RIG overlay: relativeDrag \(root.overlay.relativeDrag)")
         #endif
         print("RIG iOS \(UIDevice.current.systemVersion), window \(w.bounds.size), trackpad \(root.trackpad.frame), overlay \(root.overlay.frame)")
         if ProcessInfo.processInfo.environment["RIG_TRACE"] == "1" {
