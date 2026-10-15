@@ -20,7 +20,12 @@ struct PictureZoom: Equatable {
     /// needs a precise pinch.
     static let snapBelow: CGFloat = 1.1
     /// A two-finger double tap's zoom: 2.5 times, enough to read a Mac window's text on a phone.
+    /// The tap itself (two taps, two fingers) is UIKit's UITapGestureRecognizer with its own
+    /// timing and distance: InputOverlayView sets no thresholds of its own.
     static let tapScale: CGFloat = 2.5
+    /// How close to the view's edge the followed pointer may come before the picture moves
+    /// (`following`), in view points; at most a quarter of a small view.
+    static let followMargin: CGFloat = 40
 
     private(set) var scale: CGFloat = 1
     /// The frame point at the fitted rect's middle, each coordinate 0...1.
@@ -68,6 +73,16 @@ struct PictureZoom: Equatable {
         let target = CGPoint(x: min(max(at.x, inner.minX), inner.maxX), y: min(max(at.y, inner.minY), inner.maxY))
         guard target != at else { return self }
         return moved(to: scale, anchor: point, at: target, fitted: fitted, in: bounds)
+    }
+
+    /// A two-finger double tap at the view point `point`: back to the fitted picture when zoomed,
+    /// else `tapScale` with the frame point under the fingers kept there, as far as the edges allow.
+    func doubleTapped(at point: CGPoint, fitted: CGRect, in bounds: CGRect) -> PictureZoom {
+        if isZoomed { return PictureZoom() }
+        let r = rect(fitted: fitted, in: bounds)
+        guard r.width > 0, r.height > 0 else { return self }
+        let anchor = CGPoint(x: (point.x - r.minX) / r.width, y: (point.y - r.minY) / r.height)
+        return moved(to: Self.tapScale, anchor: anchor, at: point, fitted: fitted, in: bounds)
     }
 
     /// The zoom a pinch leaves when it ends: the fitted picture below `snapBelow`, else as it is.

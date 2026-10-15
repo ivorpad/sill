@@ -287,14 +287,8 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// about the point between the fingers. Animated, as the picture jumps otherwise.
     @objc private func handleZoomTap(_ gesture: UITapGestureRecognizer) {
         guard !strokes.silent, zoomAnchor == nil else { return }
-        let point = gesture.location(in: self)
-        let next: PictureZoom
-        if zoom.isZoomed {
-            next = PictureZoom()
-        } else {
-            guard let a = fraction(point) else { return }
-            next = zoom.moved(to: PictureZoom.tapScale, anchor: a, at: point, fitted: fittedRect, in: bounds)
-        }
+        let next = zoom.doubleTapped(at: gesture.location(in: self), fitted: fittedRect, in: bounds)
+        guard next != zoom else { return }
         momentum.stop()
         UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
             self.zoom = next

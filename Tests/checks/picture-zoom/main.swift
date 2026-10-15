@@ -133,7 +133,7 @@ check(roundTrips == 2_000, "every random step held (\(roundTrips) of 2000)")
 
 for (name, bounds, video) in cases {
     let f = fitted(video, in: bounds)
-    let margin: CGFloat = 40
+    let margin = Z.followMargin
     let inner = bounds.insetBy(dx: min(margin, bounds.width / 4), dy: min(margin, bounds.height / 4))
     // Not zoomed: nothing to follow.
     check(Z().following(pt(0.99, 0.01), margin: margin, fitted: f, in: bounds) == Z(), "\(name): unzoomed stays fitted")
@@ -158,6 +158,72 @@ for (name, bounds, video) in cases {
         check(n.following(p, margin: margin, fitted: f, in: bounds) == n, "\(name): \(p) followed twice is followed once")
     }
 }
+
+// Exactly the margin: a point the follow has to bring in lands on the inset's edge, not at the view's
+// edge and not further in, while the picture is not held at an edge of its own.
+do {
+    let margin = Z.followMargin
+    let inner = ipad.insetBy(dx: margin, dy: margin)
+    let z = Z().moved(to: 3, anchor: pt(0.5, 0.5), at: middle, fitted: ipadFit, in: ipad)
+    let r0 = z.rect(fitted: ipadFit, in: ipad)
+    // Frame points just off each side of the view, well away from the frame's own edges.
+    let left = pt((ipad.minX - 20 - r0.minX) / r0.width, 0.5)
+    let right = pt((ipad.maxX + 20 - r0.minX) / r0.width, 0.5)
+    let top = pt(0.5, (ipad.minY - 20 - r0.minY) / r0.height)
+    let bottom = pt(0.5, (ipad.maxY + 20 - r0.minY) / r0.height)
+    for (side, p, want) in [("left", left, inner.minX), ("right", right, inner.maxX)] {
+        let r = z.following(p, margin: margin, fitted: ipadFit, in: ipad).rect(fitted: ipadFit, in: ipad)
+        check(near(at(p, r).x, want), "a point off the \(side) comes in to exactly the margin (\(at(p, r).x), wanted \(want))")
+        check(near(at(p, r).y, at(p, r0).y), "following it sideways leaves the other axis alone")
+    }
+    for (side, p, want) in [("top", top, inner.minY), ("bottom", bottom, inner.maxY)] {
+        let r = z.following(p, margin: margin, fitted: ipadFit, in: ipad).rect(fitted: ipadFit, in: ipad)
+        check(near(at(p, r).y, want), "a point off the \(side) comes in to exactly the margin (\(at(p, r).y), wanted \(want))")
+        check(near(at(p, r).x, at(p, r0).x), "following it up or down leaves the other axis alone")
+    }
+    // A point inside the view but within the margin moves the picture too.
+    let near20 = pt((ipad.minX + 20 - r0.minX) / r0.width, 0.5)
+    check(z.following(near20, margin: margin, fitted: ipadFit, in: ipad) != z, "a point 20 pt from the edge, inside the view, is followed")
+    let at45 = pt((ipad.minX + 45 - r0.minX) / r0.width, 0.5)
+    check(z.following(at45, margin: margin, fitted: ipadFit, in: ipad) == z, "a point 45 pt from the edge is left where it is")
+}
+// A small view: the margin is held to a quarter of it, so a point 35 pt from a 120 pt view's edge
+// (inside its 30 pt quarter) stays put rather than being pulled 40 pt in. Needs a followMargin over 35.
+do {
+    check(Z.followMargin > 35, "the small view's cases assume a followMargin over 35 pt (\(Z.followMargin)): move them with it")
+    let small = CGRect(x: 0, y: 0, width: 120, height: 80)
+    let smallFit = fitted(CGSize(width: 1200, height: 800), in: small)
+    let z = Z().moved(to: 4, anchor: pt(0.5, 0.5), at: pt(60, 40), fitted: smallFit, in: small)
+    let r0 = z.rect(fitted: smallFit, in: small)
+    let p = pt((35 - r0.minX) / r0.width, (40 - r0.minY) / r0.height)
+    check(z.following(p, margin: Z.followMargin, fitted: smallFit, in: small) == z, "a small view: 35 pt from the edge is inside its quarter, left alone")
+    let q = pt((10 - r0.minX) / r0.width, 0.5)
+    let r = z.following(q, margin: Z.followMargin, fitted: smallFit, in: small).rect(fitted: smallFit, in: small)
+    check(near(at(q, r).x, 30), "a small view: a point 10 pt from the edge comes in to its quarter, 30 pt (\(at(q, r).x))")
+}
+
+// MARK: The two-finger double tap
+
+for (name, bounds, video) in cases {
+    let f = fitted(video, in: bounds)
+    // Unzoomed: tapScale about the point between the fingers. An interior point, so 2.5x about it
+    // needs no clamp on any panel here (checked: the rect is placed well and the point stays put).
+    let anchor = pt(0.45, 0.55)
+    let finger = at(anchor, f)
+    let z = Z().doubleTapped(at: finger, fitted: f, in: bounds)
+    let r = z.rect(fitted: f, in: bounds)
+    check(near(z.scale, Z.tapScale), "\(name): a double tap zooms to tapScale (\(z.scale))")
+    check(placedWell(r, bounds), "\(name): the tapped zoom leaves no gap")
+    check(near(at(anchor, r), finger), "\(name): the tapped point stays under the fingers (\(at(anchor, r)) vs \(finger))")
+    // Zoomed, at any scale and wherever the fingers are: back to the fitted picture.
+    check(z.doubleTapped(at: finger, fitted: f, in: bounds) == Z(), "\(name): a double tap on a zoomed picture fits it again")
+    let five = Z().moved(to: 5, anchor: pt(0.2, 0.8), at: pt(bounds.minX + 5, bounds.maxY - 5), fitted: f, in: bounds)
+    check(five.doubleTapped(at: pt(bounds.maxX - 1, bounds.minY + 1), fitted: f, in: bounds) == Z(), "\(name): from 5x too")
+    // A tap near a corner zooms there as far as the edges allow: the corner of the view stays covered.
+    let corner = Z().doubleTapped(at: pt(f.minX + 2, f.maxY - 2), fitted: f, in: bounds)
+    check(near(corner.scale, Z.tapScale) && placedWell(corner.rect(fitted: f, in: bounds), bounds), "\(name): a tap at a corner zooms without a gap")
+}
+check(Z().doubleTapped(at: middle, fitted: .zero, in: ipad) == Z(), "no video: a double tap changes nothing")
 
 print(failures == 0 ? "ok: \(checks) checks" : "FAIL: \(failures) of \(checks) checks")
 exit(failures == 0 ? 0 : 1)

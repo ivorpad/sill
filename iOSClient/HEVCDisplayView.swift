@@ -31,8 +31,6 @@ final class HEVCDisplayView: UIView {
     /// not follow the pointer: moving the picture under the finger would move what the finger points
     /// at, and the pointer with it. Set by `InputOverlayView`. Main thread.
     var followPaused = false
-    /// How close to the view's edge the followed pointer may come before the picture moves.
-    private static let followMargin: CGFloat = 40
 
     private var formatDescription: CMVideoFormatDescription?
     private var waitingForKeyframe = true
@@ -165,7 +163,7 @@ final class HEVCDisplayView: UIView {
         // mouse), unless a finger on the picture is what moves it.
         if let p, zoom.isZoomed, !followPaused {
             let fitted = Self.fittedRect(in: bounds, videoSize: pointerVideoSize)
-            zoom = zoom.following(p, margin: Self.followMargin, fitted: fitted, in: bounds)
+            zoom = zoom.following(p, margin: PictureZoom.followMargin, fitted: fitted, in: bounds)
         }
         placeCursor()
     }
