@@ -34,6 +34,13 @@ final class WindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             config.sourceRect = sourceRect
             config.ignoreShadowsDisplay = true                 // the crop is the window's frame; its shadow would be clipped anyway
             config.backgroundColor = Self.black                  // deterministic black behind the rounded corners
+        } else {
+            // A window filter otherwise draws the window at its own pixel size in the top-left of
+            // the buffer (`scalesToFit` defaults to false): a 1149×1033 window on a 1× display, at
+            // Retina's 2298×2066, filled a quarter of the frame, and since both ends treat the whole
+            // frame as the window every pointer and click landed at twice its distance from the
+            // window's top-left corner. Display filters always scale, so the Desktop never showed it.
+            config.scalesToFit = true
         }
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
