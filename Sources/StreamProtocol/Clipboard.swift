@@ -5,8 +5,11 @@ import Foundation
 /// on its clipboard is not sent back (`ClipboardEcho`).
 ///
 /// The device sends kind 29 only to a host whose window list says `clipboard` 1 or more
-/// (`WindowList.clipboard`); an older device skips the kind. On the Mac, what an app marks as
-/// concealed or transient (a password manager's copy) is never sent (`ClipboardItem.skips`).
+/// (`WindowList.clipboard`); an older device skips the kind. The Mac says it only to a connection
+/// that shares the clipboard (`ClipboardPolicy`: off until the Mac's user turns it on). On the Mac,
+/// what an app marks as concealed or transient (a password manager's copy) is never sent
+/// (`ClipboardItem.skips`). A copy written to the other side's clipboard expires after two minutes
+/// (`ClipboardExpiry`).
 public struct ClipboardItem: Codable, Equatable {
     public var text: String?
     public var image: Data?
@@ -73,5 +76,111 @@ public struct ClipboardEcho: Equatable {
     /// count is not a copy of this side's, so it is not sent back.
     public mutating func wrote(_ count: Int) {
         seen = count
+    }
+}
+
+/// The Mac's two switches for the shared clipboard (Settings › General): "Share the clipboard", and
+/// "Also with devices away from home", which counts only while the first is on. Both off until the
+/// Mac's user turns them on; no device can set either. A connection the Mac counts as away
+/// (AwayPolicy.isAway: the remote door from a VPN or the internet) shares only with both on.
+///
+/// What it decides, per connection: whether its window list says `clipboard` (so the device sends
+/// kind 29 at all), whether a kind 29 from it goes on the Mac's clipboard (one that arrives anyway
+/// is dropped), and whether the Mac's copies go to it. While no connection shares, the Mac does not
+/// watch its clipboard.
+public struct ClipboardPolicy: Equatable {
+    public var share: Bool
+    public var shareAway: Bool
+
+    public init(share: Bool = false, shareAway: Bool = false) {
+        self.share = share
+        self.shareAway = shareAway
+    }
+
+    /// Whether a connection home (`away` false) or away shares the clipboard, both ways.
+    public func shares(away: Bool) -> Bool {
+        share && (shareAway || !away)
+    }
+
+    /// What the window list says to that connection (`WindowList.clipboard`): the generation, or nil,
+    /// to which a device sends no kind 29.
+    public func advertised(away: Bool) -> Int? {
+        shares(away: away) ? ClipboardItem.generation : nil
+    }
+
+    /// Whether the Mac watches its clipboard: while at least one connected device shares it.
+    public func watches(devicesAway: [Bool]) -> Bool {
+        devicesAway.contains { shares(away: $0) }
+    }
+}
+
+/// When sharing starts, on the Mac (`ClipboardSync`): its echo rule from the count on the clipboard
+/// then, so a copy made before the switch went on, or before the first device that shares
+/// connected, is never sent. Every change of who shares starts over the same way: the copy that was
+/// on the clipboard before an away device was let in does not reach it.
+public struct ClipboardWatch: Equatable {
+    public private(set) var on = false
+    public private(set) var echo = ClipboardEcho()
+
+    public init() {}
+
+    /// Sharing is `on` now, or who shares changed (`on` again), and the clipboard reads `count`.
+    public mutating func start(on: Bool, count: Int) {
+        self.on = on
+        echo = ClipboardEcho()
+        if on { _ = echo.looked(at: count) }
+    }
+
+    /// The clipboard reads `count`: true for a new copy made on this side, to send. Never while off.
+    public mutating func looked(at count: Int) -> Bool {
+        guard on else { return false }
+        return echo.looked(at: count)
+    }
+
+    /// This side wrote the other side's copy, or cleared it, and the clipboard reads `count`.
+    public mutating func wrote(_ count: Int) {
+        echo.wrote(count)
+    }
+}
+
+/// On the device: what a window list's `clipboard` asks of it. It sends only to a Mac that says the
+/// generation (`now`). A Mac that starts sharing during a session (`was` below the generation, not
+/// the session's first list) is an enable moment: the device starts over from its clipboard as it
+/// stands, and a copy made before is never sent. At a session's first list, a copy made while there
+/// was no session goes only if the last session shared the clipboard too (`sharedLastSession`): a
+/// copy made while the Mac had it off stays on the device.
+public enum ClipboardListAction: Equatable {
+    case nothing, send, startOver
+
+    public static func on(was: Int?, now: Int?, firstList: Bool, sharedLastSession: Bool) -> ClipboardListAction {
+        let takes = (now ?? 0) >= ClipboardItem.generation
+        let took = (was ?? 0) >= ClipboardItem.generation
+        guard takes, !took else { return .nothing }
+        return firstList && sharedLastSession ? .send : .startOver
+    }
+}
+
+/// A copy one side wrote for the other expires after two minutes. The Mac clears its clipboard then
+/// only if the change count is still the one Sill's write left (a copy made since stays); the device
+/// gives UIPasteboard the same lifetime as an expiration date.
+public struct ClipboardExpiry: Equatable {
+    public static let lifetime: Double = 120
+
+    /// The count Sill's last write left, and when (seconds).
+    public private(set) var count: Int?
+    public private(set) var at: Double = 0
+
+    public init() {}
+
+    public mutating func wrote(_ count: Int, at time: Double) {
+        self.count = count
+        at = time
+    }
+
+    /// Whether to clear the clipboard, which reads `count` at `now`: Sill's own write, unchanged, and
+    /// its lifetime is up.
+    public func clears(count current: Int, now: Double) -> Bool {
+        guard let count, current == count else { return false }
+        return now - at >= Self.lifetime
     }
 }

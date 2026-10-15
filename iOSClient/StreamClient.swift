@@ -738,6 +738,9 @@ final class StreamClient: ObservableObject {
     /// This device's clipboard as last looked at (StreamClient+Clipboard.swift). Kept across
     /// sessions: a copy made while disconnected goes at the next one.
     var clipboardEcho = ClipboardEcho()
+    /// Whether the last session's Mac shared the clipboard as it ended (`ClipboardListAction`): only
+    /// then does a copy made here while there was no session go at the next one.
+    var clipboardSharedLastSession = false
     /// This device's path (status, interfaces, cost), for "did it leave home since the loss".
     var pathSignature = ""
     var pathMonitor: NWPathMonitor?
@@ -2857,6 +2860,7 @@ final class StreamClient: ObservableObject {
         abandonMove()
         resetPath()
         lastMoveAttempt = nil
+        if sessionListed { clipboardSharedLastSession = (hostClipboard ?? 0) >= ClipboardItem.generation }
         sessionListed = false
         sessionHost = nil
         refusedListing = nil
@@ -3376,8 +3380,10 @@ final class StreamClient: ObservableObject {
                 if self.hostProtocol != list.protocol { self.hostProtocol = list.protocol }
                 if self.hostGestures != list.gestures { self.hostGestures = list.gestures }
                 if self.hostClipboard != list.clipboard {
+                    let action = ClipboardListAction.on(was: self.hostClipboard, now: list.clipboard, firstList: !self.sessionListed,
+                                                        sharedLastSession: self.clipboardSharedLastSession)
                     self.hostClipboard = list.clipboard
-                    self.sendClipboardIfNew()       // a copy made here while there was no session
+                    self.clipboardListed(action)
                 }
                 if !self.sessionListed {
                     self.sessionListed = true

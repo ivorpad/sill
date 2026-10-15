@@ -49,11 +49,18 @@ package struct HostConfig: Equatable, Sendable {
     /// identity store), never in UserDefaults or a launch argument: any process of this user can
     /// write those, and this is the one switch that would let an unpaired key in.
     package var requirePairing: Bool
+    /// Share the clipboard (kind 29, ClipboardPolicy): off until the Mac's user turns it on. While
+    /// off nothing goes either way and no window list says `clipboard`. `shareClipboardAway` lets
+    /// devices away from home (AwayPolicy.isAway) share it too, and counts only with the first on.
+    /// The Mac's alone, like Remote Access: absent from StreamSettings, HostSettingsChange,
+    /// DeviceSettings.accepted, `applying` and `restartNeeded`.
+    package var shareClipboard: Bool
+    package var shareClipboardAway: Bool
 
     /// Every knob is required, so the compiler finds each place that builds one when a knob is added.
     package init(maxFPS: Int, captureScale: CGFloat, bitrate: Int, awayBitrate: Int, awayCaptureScale: CGFloat,
                  prioritizeSpeed: Bool, virtualDisplay: Bool, directWireless: Bool, remoteAccess: Bool, remotePort: Int,
-                 internetAccess: Bool, requirePairing: Bool) {
+                 internetAccess: Bool, requirePairing: Bool, shareClipboard: Bool, shareClipboardAway: Bool) {
         self.maxFPS = maxFPS
         self.captureScale = captureScale
         self.bitrate = bitrate
@@ -66,6 +73,8 @@ package struct HostConfig: Equatable, Sendable {
         self.remotePort = remotePort
         self.internetAccess = internetAccess
         self.requirePairing = requirePairing
+        self.shareClipboard = shareClipboard
+        self.shareClipboardAway = shareClipboardAway
     }
 
     /// The spike's knobs, formerly the `let`s at the top of the CLI's main.swift, and the app's
@@ -75,12 +84,13 @@ package struct HostConfig: Equatable, Sendable {
     /// exposure. 7455 is unassigned at IANA and below the ephemeral range. Away from home, Low ·
     /// Standard (Noah, 2026-09-25): a slow connection never starts at the home quality. Require
     /// pairing on: a home door that speaks TLS admits only paired devices until the Mac's user says
-    /// otherwise.
+    /// otherwise. The shared clipboard off, at home and away (Noah, 2026-10-15): the Mac's user
+    /// turns it on.
     package static let standard = HostConfig(maxFPS: 120, captureScale: 2, bitrate: 15_000_000,
                                              awayBitrate: 4_000_000, awayCaptureScale: 1,
                                              prioritizeSpeed: false, virtualDisplay: false, directWireless: false,
                                              remoteAccess: false, remotePort: 7455, internetAccess: false,
-                                             requirePairing: true)
+                                             requirePairing: true, shareClipboard: false, shareClipboardAway: false)
 
     /// The remote door's port when none is set.
     package static let defaultRemotePort = 7455
@@ -103,7 +113,8 @@ package struct HostConfig: Equatable, Sendable {
     /// What differs from `new`, for the log: "frame rate limit 120 → 60 fps, bitrate 15 → 8 Mbps
     /// per 60 fps, Retina → points, away bitrate 4 → 15 Mbps per 60 fps, away points → Retina, speed
     /// off → on, virtual display off → on, direct wireless off → on, remote access off → on, remote
-    /// port 7455 → 7460, internet access off → on, require pairing on → off".
+    /// port 7455 → 7460, internet access off → on, require pairing on → off, clipboard off → on,
+    /// clipboard away off → on".
     package func changes(to new: HostConfig) -> String {
         func onOff(_ b: Bool) -> String { b ? "on" : "off" }
         func scaleName(_ s: CGFloat) -> String { s >= 1.5 ? "Retina" : "points" }
@@ -120,6 +131,8 @@ package struct HostConfig: Equatable, Sendable {
         if remotePort != new.remotePort { parts.append("remote port \(remotePort) → \(new.remotePort)") }
         if internetAccess != new.internetAccess { parts.append("internet access \(onOff(internetAccess)) → \(onOff(new.internetAccess))") }
         if requirePairing != new.requirePairing { parts.append("require pairing \(onOff(requirePairing)) → \(onOff(new.requirePairing))") }
+        if shareClipboard != new.shareClipboard { parts.append("clipboard \(onOff(shareClipboard)) → \(onOff(new.shareClipboard))") }
+        if shareClipboardAway != new.shareClipboardAway { parts.append("clipboard away \(onOff(shareClipboardAway)) → \(onOff(new.shareClipboardAway))") }
         return parts.isEmpty ? "no change" : parts.joined(separator: ", ")
     }
 

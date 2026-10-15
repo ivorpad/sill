@@ -147,6 +147,7 @@ package final class StreamCoordinator {
         didSet {
             if case .window(let id) = active { catalog.activeWindowID = id } else { catalog.activeWindowID = nil }
             if active == .none { status.update { $0.stream = nil } }
+            dockEdge.reset()                        // an edge reached on the last source is not this one's
             server.setStreaming(active != .none)   // link keepalive ticks while a source is live
             cursorShapes.running = active != .none
             pointer.setGeometry(pointerGeometry(), fps: fps)   // also on a restart of the same source
@@ -204,9 +205,11 @@ package final class StreamCoordinator {
     private var deselectWhenSettled = false
     /// The Mac's cursor shape, streamed to the clients that draw the pointer themselves.
     let cursorShapes = CursorShapeWatcher()
-    /// The shared clipboard (kind 29): this Mac's copies out to the devices, theirs in. Runs while a
-    /// device is connected.
+    /// The shared clipboard (kind 29): this Mac's copies out to the devices that share it, theirs in.
+    /// Runs while one is connected (`refreshClipboard`).
     let clipboard = ClipboardSync()
+    /// A window stream's pointer held at its bottom edge: the Desktop with the Dock (DockEdge).
+    private var dockEdge = DockEdge()
     private let macName = Host.current().localizedName ?? "Mac"
     /// In every window list (`WindowList.launchID`): a device moving its session from AWDL to the
     /// network checks that the new connection reaches this same running host, since the Bonjour
@@ -383,7 +386,7 @@ package final class StreamCoordinator {
                 self.routes[id] = nil
                 self.lastPairingWanted[id] = nil
                 self.connections[id] = nil
-                self.clipboard.running = !self.connections.isEmpty
+                self.refreshClipboard()
                 self.lastPublished[id] = nil
                 self.linkReports[id] = nil
                 if self.flipWait == id { self.flipWait = nil }
@@ -424,9 +427,12 @@ package final class StreamCoordinator {
             self?.server.broadcast(StreamMessage(kind: .cursorShape, timestamp: Date().timeIntervalSince1970,
                                                  isKeyframe: false, payload: blob))
         }
+        // Only to the connections that share the clipboard (Settings › General; ClipboardPolicy).
         clipboard.onCopy = { [weak self] item in
-            self?.server.broadcast(StreamMessage(kind: .clipboard, timestamp: Date().timeIntervalSince1970,
-                                                 isKeyframe: false, payload: Wire.encode(item)))
+            guard let self else { return }
+            let message = StreamMessage(kind: .clipboard, timestamp: Date().timeIntervalSince1970,
+                                        isKeyframe: false, payload: Wire.encode(item))
+            self.server.send(each: self.connections.filter { self.sharesClipboard($0.key) }.map { ($0.value, message) })
         }
         catalog.onInstalledAppsReady = { [weak self] apps in
             guard let self else { return }
@@ -739,7 +745,16 @@ package final class StreamCoordinator {
         awayRunning = away
         let old = config
         guard next != old else { return }
+        // Who shares the clipboard changes: a copy made just before goes to whoever shared it then.
+        let clipboardChanged = old.clipboardPolicy != next.clipboardPolicy
+        if clipboardChanged { clipboard.poll() }
         config = next
+        // Then each device's list says `clipboard` or not, and the Mac starts over from its
+        // clipboard as it stands: a copy made before the switch went on is never sent.
+        if clipboardChanged {
+            refreshClipboard(restart: true)
+            broadcastList()
+        }
         // The listener's, not the pipeline's: StreamServer replaces it and connected devices keep streaming.
         if old.directWireless != next.directWireless { server.setPeerToPeer(next.directWireless) }
         // The doors', not the pipeline's: RemoteAccess starts, stops or moves the remote door, and
@@ -918,6 +933,7 @@ package final class StreamCoordinator {
             if !synthetic { raiseIfInteracting(event) }
             deliver(event, in: rect, from: device)
             desktopInputMayActivate(event)
+            dockEdgeInput(event, in: rect, from: device)
         case .gesture:
             // A three- or four-finger gesture (docs/trackpad-gestures-plan.md §7.4), which the Mac
             // turns into its own shortcut. At most `gesturesPerSecond` a second per connection: a
@@ -937,6 +953,12 @@ package final class StreamCoordinator {
         case .clipboard:
             // A copy made on a device, for this Mac's clipboard. The reader already capped it at
             // `maxClientPayload`; `received` drops anything over the item's own cap.
+            // Only from a connection that shares it: its window list said no `clipboard` otherwise,
+            // and a kind 29 that comes anyway is dropped.
+            guard sharesClipboard(ObjectIdentifier(connection)) else {
+                print("Clipboard: a copy from \(deviceName(connection)) dropped; the clipboard isn’t shared with it")
+                return
+            }
             guard let item = Wire.decode(ClipboardItem.self, from: message.payload) else { return }
             clipboard.received(item, from: deviceName(connection))
         case .viewport:
@@ -2245,20 +2267,70 @@ package final class StreamCoordinator {
 
     // MARK: Catalog to clients
 
-    private func listMessage() -> StreamMessage {
+    /// The window list for one connection: `clipboard` only to one that shares it (ClipboardPolicy).
+    private func listMessage(for id: ObjectIdentifier) -> StreamMessage {
         StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
                                                       gestures: TrackpadGesture.generation,
-                                                      clipboard: ClipboardItem.generation)))
+                                                      clipboard: config.clipboardPolicy.advertised(away: routes[id]?.isAway ?? true))))
     }
 
-    private func broadcastList() { server.broadcast(listMessage()) }
+    /// Each connection its own list, since `clipboard` differs between them; one that has not had its
+    /// catalog yet gets the list there (`sendCatalog`).
+    private func broadcastList() { server.send(each: connections.map { ($0.value, listMessage(for: $0.key)) }) }
+
+    // MARK: The shared clipboard
+
+    /// Whether this connection shares the clipboard (Settings › General): at home with the switch
+    /// on, away with the away switch on too. One with no route yet counts as away.
+    private func sharesClipboard(_ id: ObjectIdentifier) -> Bool {
+        config.clipboardPolicy.shares(away: routes[id]?.isAway ?? true)
+    }
+
+    /// The Mac watches its clipboard while a connected device shares it. `restart`: who shares
+    /// changed, so it starts over from the clipboard as it stands (ClipboardWatch).
+    private func refreshClipboard(restart: Bool = false) {
+        clipboard.set(running: config.clipboardPolicy.watches(devicesAway: connections.keys.map { routes[$0]?.isAway ?? true }),
+                      restart: restart)
+    }
+
+    // MARK: The Dock from a window
+
+    /// Feeds DockEdge each pointer event of a window stream; a dwell it arms is checked when it is
+    /// up, as the finger may rest at the edge without another move.
+    private func dockEdgeInput(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device) {
+        guard case .window = active, case .pointer(let action, let x, let y) = event else { return }
+        switch action {
+        case .leftDown, .rightDown: dockEdge.button(down: true)
+        case .leftUp, .rightUp: dockEdge.button(down: false)
+        case .move:
+            let now = CFAbsoluteTimeGetCurrent()
+            guard dockEdge.moved(y: y, now: now) else { return }
+            let screenX = rect.minX + CGFloat(x) * rect.width
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(DockEdge.dwell))
+                guard let self, case .window = self.active,
+                      self.dockEdge.fire(armed: now, now: CFAbsoluteTimeGetCurrent()) else { return }
+                await self.revealDock(atScreenX: screenX, from: device)
+            }
+        }
+    }
+
+    /// The Desktop, picked as a device picks it, then the pointer on its bottom row under where it
+    /// was, which shows a hidden Dock (DockEdge.pixel keeps it on the screen's last row).
+    private func revealDock(atScreenX screenX: CGFloat, from device: KeyStrokes.Device) async {
+        print("Dock: the pointer held at the window's bottom edge; streaming the Desktop")
+        await handlePick(.desktop)
+        guard active == .desktop, let display = catalog.display?.frame, display.width > 0 else { return }
+        let x = Double(min(max((screenX - display.minX) / display.width, 0), 1))
+        deliver(.pointer(.move, x: x, y: 1), in: display, from: device)
+    }
 
     private func sendCatalog(to connection: NWConnection) {
         let now = Date().timeIntervalSince1970
         print("Catalog → \(connection.endpoint): \(catalog.infos.count) windows, \(catalog.allIcons.count) icons, \(catalog.installedApps.count) apps")
-        server.send(listMessage(), to: connection)
+        server.send(listMessage(for: ObjectIdentifier(connection)), to: connection)
         // What the settings are, silently (the line above is the only one printed on connect). An
         // older device skips the kind. Recorded as what this connection was last sent, and only
         // then does it join the publishes: none goes out ahead of its window list, and the catalog
@@ -2268,7 +2340,7 @@ package final class StreamCoordinator {
         server.send(settingsMessage(state), to: connection)
         lastPublished[id] = state
         connections[id] = connection
-        clipboard.running = true
+        refreshClipboard()
         // Who this Mac is and how to reach it from afar (kind 18, signed), on both doors, only from
         // a host with an identity. An older device skips it too.
         if let info = remote?.macInfoMessage() { server.send(info, to: connection) }

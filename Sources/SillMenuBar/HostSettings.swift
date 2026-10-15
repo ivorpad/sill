@@ -18,8 +18,9 @@ import SillHostCore
 /// save writes only the keys a change touched. Launch at login is not stored here: SMAppService
 /// is its source of truth (LoginItem.swift).
 ///
-/// Remote Access, its port and the internet switch are the Mac's alone: they come from here (the
-/// menu, the Remote Access pane, -SillSetAfter), never from a device. The trust list, the keys and
+/// Remote Access, its port, the internet switch and the shared clipboard's two switches are the
+/// Mac's alone: they come from here (the menu, the Settings panes, -SillSetAfter), never from a
+/// device. The trust list, the keys and
 /// Require pairing never live here: any process of the same user can write these defaults
 /// (KeychainIdentityStore; docs/home-pairing-plan.md §6.5). `config.requirePairing` only carries
 /// the stored value to the host (AppModel.setRequirePairing), and `save(changedFrom:)` never writes it.
@@ -39,6 +40,7 @@ final class HostSettings {
         static let awayBitrate = "awayBitrate", awayCaptureScale = "awayCaptureScale"
         static let prioritizeSpeed = "prioritizeSpeed", virtualDisplay = "virtualDisplay", directWireless = "directWireless"
         static let remoteAccess = "remoteAccess", remotePort = "remotePort", internetAccess = "internetAccess"
+        static let shareClipboard = "shareClipboard", shareClipboardAway = "shareClipboardAway"
         static let remoteAddressName = "remoteAddressName", remoteDevicesSeen = "remoteDevicesSeen"
         static let settingsTab = "settingsTab", permissionsOnboardingDismissed = "permissionsOnboardingDismissed"
         static let askedScreenRecording = "askedScreenRecording", askedAccessibility = "askedAccessibility"
@@ -108,6 +110,9 @@ final class HostSettings {
             Key.remoteAccess: standard.remoteAccess,
             Key.remotePort: standard.remotePort,
             Key.internetAccess: standard.internetAccess,
+            // Off, at home and away: the Mac's user turns the shared clipboard on.
+            Key.shareClipboard: standard.shareClipboard,
+            Key.shareClipboardAway: standard.shareClipboardAway,
             Key.remoteAddressName: "",
             Key.updateCheck: true,
         ])
@@ -125,7 +130,9 @@ final class HostSettings {
                             // Never a default or a launch argument: it lives with the trust list
                             // (the identity store), from which AppModel reads it at launch, before
                             // the host starts, and to which the Devices pane saves it.
-                            requirePairing: HostConfig.standard.requirePairing).validated()
+                            requirePairing: HostConfig.standard.requirePairing,
+                            shareClipboard: defaults.bool(forKey: Key.shareClipboard),
+                            shareClipboardAway: defaults.bool(forKey: Key.shareClipboardAway)).validated()
         remoteAddressName = defaults.string(forKey: Key.remoteAddressName) ?? ""
         updateCheck = defaults.bool(forKey: Key.updateCheck)
         settingsTab = defaults.string(forKey: Key.settingsTab).flatMap(SettingsTab.init(rawValue:)) ?? .general
@@ -149,6 +156,8 @@ final class HostSettings {
         if config.remoteAccess != old.remoteAccess { defaults.set(config.remoteAccess, forKey: Key.remoteAccess) }
         if config.remotePort != old.remotePort { defaults.set(config.remotePort, forKey: Key.remotePort) }
         if config.internetAccess != old.internetAccess { defaults.set(config.internetAccess, forKey: Key.internetAccess) }
+        if config.shareClipboard != old.shareClipboard { defaults.set(config.shareClipboard, forKey: Key.shareClipboard) }
+        if config.shareClipboardAway != old.shareClipboardAway { defaults.set(config.shareClipboardAway, forKey: Key.shareClipboardAway) }
     }
 
     // MARK: Remote devices seen (display only)

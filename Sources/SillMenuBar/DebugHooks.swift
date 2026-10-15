@@ -16,6 +16,7 @@ import StreamProtocol
 ///                                              awayBitrate, awayCaptureScale,
 ///                                              prioritizeSpeed, virtualDisplay, directWireless,
 ///                                              remoteAccess, remotePort, internetAccess,
+///                                              shareClipboard, shareClipboardAway,
 ///                                              remoteAddressName=host[:port], updateCheck,
 ///                                              requirePairing=0|1). Saved like any change
 ///                                              (requirePairing in the identity store: memory, or
@@ -245,6 +246,8 @@ enum DebugHooks {
         case "remoteAccess": config.remoteAccess = flag
         case "remotePort": if let v = Int(value) { config.remotePort = v }
         case "internetAccess": config.internetAccess = flag
+        case "shareClipboard": config.shareClipboard = flag
+        case "shareClipboardAway": config.shareClipboardAway = flag
         case "remoteAddressName": addressName = value
         case "requirePairing": requirePairing = flag
         case "updateCheck": updateCheck = flag

@@ -34,6 +34,16 @@ config.virtualDisplay = virtualDisplay
 // CLAUDE.md. A device can still turn it on or off; that lasts until SillHost quits.
 config.directWireless = CommandLine.arguments.contains("--direct-wireless")
 
+// `SillHost --share-clipboard`: share the clipboard with devices at home (kind 29, ClipboardPolicy),
+// as Settings › General's "Share the clipboard" does; `--share-clipboard-away` also with devices
+// away from home. Off by default, like the app's.
+config.shareClipboard = CommandLine.arguments.contains("--share-clipboard")
+config.shareClipboardAway = CommandLine.arguments.contains("--share-clipboard-away")
+if config.shareClipboardAway && !config.shareClipboard {
+    print("--share-clipboard-away needs --share-clipboard.")
+    exit(2)
+}
+
 // `SillHost --remote[=PORT]`: the remote door for this run (TLS 1.3, paired devices only), on
 // PORT or any free port, so it never collides with Sill.app's 7455. A new in-memory identity and
 // trust list every run. A pairing window is always open (a fresh one after each use or expiry);

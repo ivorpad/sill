@@ -137,6 +137,15 @@ private struct GeneralPane: View {
             } footer: {
                 Footnote("Lets your iPhone and iPad connect when they’re near this Mac, even without a shared Wi\u{2011}Fi network, the way AirDrop does. While it’s on, this Mac’s Wi\u{2011}Fi keeps stepping away from your network, so streaming over Wi\u{2011}Fi can stutter. Anyone nearby with Sill can find this Mac; only devices you paired can connect, unless Require pairing is off.")
             }
+            // The shared clipboard (kind 29, ClipboardPolicy): off until turned on here, and away
+            // from home only with the second switch too. Applies at once, without a restart.
+            Section {
+                Toggle("Share the clipboard", isOn: $settings.config.shareClipboard)
+                Toggle("Also with devices away from home", isOn: $settings.config.shareClipboardAway)
+                    .disabled(!settings.config.shareClipboard)
+            } footer: {
+                Footnote("Text or an image you copy on this Mac can be pasted on a connected iPhone or iPad, and the other way round. What you copied before turning this on isn’t shared, and a copy that arrives from the other side is cleared from its clipboard after 2 minutes. Copies a password manager marks as private stay on this Mac. Away from home means connected through Remote Access from a VPN or the internet.")
+            }
             if let preview = previewUpdates {
                 UpdatesSection(pane: preview, automatic: .constant(true))
             } else {

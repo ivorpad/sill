@@ -47,9 +47,9 @@ extension HostConfig {
 /// What a device may change on this host. There is no generic "write a default": a device moves
 /// these six knobs, to exactly the Mac menu's values, and nothing else. From a connection the Mac
 /// counts as away, its bitrate and capture scale land on the away pair (`applyingAway`): the same
-/// whitelist decides both routes. Remote access, its port and
-/// internet access can never enter this whitelist: they widen who reaches the Mac, and only the
-/// Mac's own user may do that.
+/// whitelist decides both routes. Remote access, its port,
+/// internet access and the shared clipboard's switches can never enter this whitelist: they widen
+/// who reaches the Mac or what leaves it, and only the Mac's own user may do that.
 enum DeviceSettings {
     /// The fields of `c` a device may set: exactly the Mac menu's choices (`SettingsChoices`), and
     /// the virtual display on only where this host can run it (off is always allowed), and Direct

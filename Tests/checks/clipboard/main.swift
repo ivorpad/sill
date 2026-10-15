@@ -87,5 +87,103 @@ for _ in 0..<5_000 {
 }
 check(held == 5_000, "random sessions match the model (\(held) of 5000)")
 
+// MARK: Who shares (the Mac's two switches)
+
+typealias P = ClipboardPolicy
+let off = P(), home = P(share: true), homeAndAway = P(share: true, shareAway: true), awayOnly = P(share: false, shareAway: true)
+check(off == P(share: false, shareAway: false), "homeAndAway switches start off")
+check(!off.shares(away: false) && !off.shares(away: true), "off: no device shares, home or away")
+check(off.advertised(away: false) == nil && off.advertised(away: true) == nil, "off: no window list says clipboard")
+check(home.shares(away: false), "on: a device at home shares")
+check(!home.shares(away: true), "on without the away switch: a device away does not")
+check(home.advertised(away: false) == C.generation, "on: the list at home says the generation")
+check(home.advertised(away: true) == nil, "on without the away switch: the list away says nothing")
+check(homeAndAway.shares(away: false) && homeAndAway.shares(away: true), "homeAndAway on: home and away share")
+check(homeAndAway.advertised(away: true) == C.generation, "homeAndAway on: the list away says the generation")
+check(!awayOnly.shares(away: true) && !awayOnly.shares(away: false), "the away switch alone shares nothing")
+check(awayOnly.advertised(away: true) == nil, "the away switch alone: no list says clipboard")
+check(!off.watches(devicesAway: [false, true]), "off: the Mac does not watch its clipboard")
+check(!home.watches(devicesAway: []), "nobody connected: no watching")
+check(!home.watches(devicesAway: [true, true]), "on, only devices away: no watching")
+check(home.watches(devicesAway: [true, false]), "on, one device at home: watching")
+check(homeAndAway.watches(devicesAway: [true]), "homeAndAway on, a device away: watching")
+// Every combination: advertised, shares and watches say the same thing.
+for share in [false, true] {
+    for shareAway in [false, true] {
+        let p = P(share: share, shareAway: shareAway)
+        for away in [false, true] {
+            check((p.advertised(away: away) != nil) == p.shares(away: away), "advertised as shares (\(share) \(shareAway) \(away))")
+            check(p.watches(devicesAway: [away]) == p.shares(away: away), "watches one device as it shares (\(share) \(shareAway) \(away))")
+            check(p.shares(away: away) == (share && (!away || shareAway)), "the rule (\(share) \(shareAway) \(away))")
+        }
+    }
+}
+
+// MARK: When sharing starts on the Mac (the enable moment)
+
+var w = ClipboardWatch()
+check(!w.on && !w.looked(at: 3), "before sharing: a copy is not sent")
+check(!w.looked(at: 4), "nor the next")
+w.start(on: true, count: 4)
+check(!w.looked(at: 4), "turning it on: the copy on the clipboard then is not sent")
+check(w.looked(at: 5), "a copy after: sent")
+check(!w.looked(at: 5), "once")
+w.wrote(6)
+check(!w.looked(at: 6), "a device's copy written here: not sent back")
+w.start(on: true, count: 9)
+check(!w.looked(at: 9), "who shares changed: the copy on the clipboard then is not sent")
+check(w.looked(at: 10), "the next is")
+w.start(on: false, count: 10)
+check(!w.looked(at: 11), "turned off: a copy is not sent")
+w.start(on: true, count: 12)
+check(!w.looked(at: 12), "on again: a copy made while it was off is not sent")
+check(w.looked(at: 13), "a copy made since is")
+var cold = ClipboardWatch()
+cold.start(on: true, count: 0)
+check(!cold.looked(at: 0), "on at count 0: nothing sent")
+check(cold.looked(at: 1), "one copy after count 0: sent")
+// The count is taken as sharing starts, not at the first look: a copy made between is the Mac's own,
+// after the switch went on, and goes.
+var quick = ClipboardWatch()
+quick.start(on: true, count: 20)
+check(quick.looked(at: 21), "a copy made after turning on, before the first look: sent")
+
+// MARK: On the device: what a window list's clipboard asks
+
+typealias A = ClipboardListAction
+let g = C.generation
+check(A.on(was: nil, now: nil, firstList: true, sharedLastSession: true) == .nothing, "a Mac that does not share: nothing")
+check(A.on(was: nil, now: 0, firstList: false, sharedLastSession: true) == .nothing, "a zero generation: nothing")
+check(A.on(was: g, now: nil, firstList: false, sharedLastSession: true) == .nothing, "the Mac stopped sharing: nothing to send")
+check(A.on(was: g, now: g, firstList: false, sharedLastSession: false) == .nothing, "no change: nothing")
+check(A.on(was: g, now: g + 1, firstList: false, sharedLastSession: false) == .nothing, "a later generation of a Mac that shared: nothing new")
+check(A.on(was: nil, now: g, firstList: false, sharedLastSession: true) == .startOver,
+      "the Mac started sharing mid-session: start over, the copy before is not sent")
+check(A.on(was: 0, now: g, firstList: false, sharedLastSession: true) == .startOver, "from a zero generation too")
+check(A.on(was: nil, now: g, firstList: true, sharedLastSession: true) == .send,
+      "a session's first list, the last session shared: a copy made between goes")
+check(A.on(was: nil, now: g, firstList: true, sharedLastSession: false) == .startOver,
+      "a session's first list, the last did not share: a copy made between stays")
+check(A.on(was: nil, now: g + 1, firstList: true, sharedLastSession: true) == .send, "a later generation takes it too")
+
+// MARK: Two minutes
+
+typealias X = ClipboardExpiry
+check(X.lifetime == 120, "a shared copy lives two minutes")
+var x = X()
+check(!x.clears(count: 0, now: 1_000), "nothing written: nothing cleared")
+x.wrote(7, at: 100)
+check(!x.clears(count: 7, now: 100), "just written: kept")
+check(!x.clears(count: 7, now: 219.9), "under two minutes: kept")
+check(x.clears(count: 7, now: 220), "at two minutes: cleared")
+check(x.clears(count: 7, now: 500), "after: cleared")
+check(!x.clears(count: 8, now: 220), "a copy made since (one count on): kept")
+check(!x.clears(count: 6, now: 220), "a count that went down: not Sill's write, kept")
+check(!x.clears(count: 9, now: 1_000), "someone else's copy is never cleared")
+x.wrote(9, at: 300)
+check(!x.clears(count: 7, now: 420), "the earlier write's count no longer clears")
+check(!x.clears(count: 9, now: 400), "the later write has its own two minutes")
+check(x.clears(count: 9, now: 420), "and they run out")
+
 print(failures == 0 ? "ok: \(checks) checks" : "FAIL: \(failures) of \(checks) checks")
 exit(failures == 0 ? 0 : 1)

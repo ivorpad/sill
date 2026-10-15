@@ -99,11 +99,12 @@ final class InputInjector {
         }
     }
 
-    /// Where a device's position lands on the Mac: its fraction of `rect`; with no source to place it
-    /// on (`.null`), where the pointer is now.
+    /// Where a device's position lands on the Mac: on one of `rect`'s own pixels (`DockEdge.pixel`:
+    /// a fraction of 1 is the last row, where a hidden Dock shows); with no source to place it on
+    /// (`.null`), where the pointer is now.
     private func point(_ x: Double, _ y: Double, in rect: CGRect) -> CGPoint {
         if rect.isNull { return pointerNow() }
-        return CGPoint(x: rect.minX + CGFloat(x) * rect.width, y: rect.minY + CGFloat(y) * rect.height)
+        return DockEdge.pixel(x: x, y: y, in: rect)
     }
 
     /// Where the Mac's pointer is: read (no permission) on a host that posts; on a synthetic host,
