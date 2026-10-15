@@ -20,9 +20,19 @@ public struct Viewport: Codable, Hashable {
     /// The host runs the stream at the highest rate among its connected clients and restarts the
     /// pipeline when that changes.
     public var fps: Int?
+    /// The device screen's scale (UIScreen.scale: 2 on iPads, 3 on most iPhones), so the host can
+    /// size a display in the device's pixels. nil from a device before 2026-10-15.
+    public var pixelScale: Double?
+    /// This device wants its Desktop pick to be a display of its own, sized to its panel
+    /// (docs/sidecar-desktop-plan.md), rather than the Mac's screen. Sent only to a host whose window
+    /// list says `deviceDisplay` 1 or more; nil from older devices and to older hosts, which keep
+    /// the Mac's screen.
+    public var deviceDisplay: Bool?
 
-    public init(width: Double, height: Double, scale: Double?, localCursor: Bool? = nil, fps: Int? = nil) {
+    public init(width: Double, height: Double, scale: Double?, localCursor: Bool? = nil, fps: Int? = nil,
+                pixelScale: Double? = nil, deviceDisplay: Bool? = nil) {
         self.width = width; self.height = height; self.scale = scale; self.localCursor = localCursor; self.fps = fps
+        self.pixelScale = pixelScale; self.deviceDisplay = deviceDisplay
     }
 }
 

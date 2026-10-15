@@ -37,6 +37,9 @@ struct HostSettingsPanel: View {
     /// This device's switch for three-finger gestures (docs/trackpad-gestures-plan.md §8): on unless
     /// turned off, read by `StreamClient.sendGesture` at each gesture, never sent.
     @AppStorage(StreamClient.gesturesKey) private var gesturesOn = true
+    /// This device's Desktop preference (docs/sidecar-desktop-plan.md): false, the Mac's screen, unless
+    /// changed. Every viewport carries it to a Mac that offers a display for the device.
+    @AppStorage(StreamClient.deviceDisplayKey) private var deviceDisplayOn = false
     /// VoiceOver is on: it keeps three-finger swipes and taps for itself, so the This iPad group says
     /// its rows do the gestures instead.
     @State private var voiceOver = HostSettingsPanel.voiceOverRunning
@@ -310,7 +313,7 @@ struct HostSettingsPanel: View {
                 .padding(.horizontal, 4)
             }
             // After everything of the Mac's, whatever state its settings are in: while they load, and
-            // for a Mac without them too. Both are this device's own: its gestures, then the tour.
+            // for a Mac without them too. Both are this device's own: its Desktop and gestures, then the tour.
             thisDevice
             tour
         }
@@ -441,8 +444,9 @@ struct HostSettingsPanel: View {
 
     // MARK: This device
 
-    /// This device's own group, after the Mac's: its switch for three-finger gestures, and what each
-    /// does when the Mac takes them (Take the Tour follows it). After the Mac's rows because it is
+    /// This device's own group, after the Mac's: what its Desktop button shows (the Mac's screen or a
+    /// display for this device), its switch for three-finger gestures, and what each does when the
+    /// Mac takes them (Take the Tour follows it). After the Mac's rows because it is
     /// the least changed, and the compact halves' 259 pt show the Mac's rows first. The switch
     /// reaches nothing; a row, activated by VoiceOver, Voice Control or Switch Control, does its
     /// gesture on the Mac as three fingers would (`sendGesture`: the switch, the Mac's `gestures`,
@@ -456,6 +460,20 @@ struct HostSettingsPanel: View {
             .padding(.bottom, 6)
             .accessibilityAddTraits(.isHeader)
             .id(Self.gesturesGroupID)
+        Rows {
+            AdaptiveRow(title: "Desktop", since: nil) {
+                Picker("Desktop", selection: $deviceDisplayOn) {
+                    Text("This Mac’s screen").tag(false)
+                    Text("A display for this \(device)").tag(true)
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            // A Mac without it: the choice shows, and cannot change, until Sill there is updated.
+            .disabled(!macOffersDeviceDisplay)
+        }
+        .onChange(of: deviceDisplayOn) { _, _ in client.deviceDisplayChanged() }
+        Footnote(text: deviceDisplayFooter)
         Rows {
             Toggle(isOn: $gesturesOn) {
                 Text("Three-Finger Gestures").foregroundStyle(Palette.text)
@@ -471,6 +489,16 @@ struct HostSettingsPanel: View {
             }
         }
         Footnote(text: gesturesFooter)
+    }
+
+    /// The Mac's window list said it offers a display for the device (`WindowList.deviceDisplay`).
+    private var macOffersDeviceDisplay: Bool { (client.hostDeviceDisplay ?? 0) >= 1 }
+
+    /// Under the Desktop picker: what each choice gives, or why it cannot change.
+    private var deviceDisplayFooter: String {
+        guard macOffersDeviceDisplay else { return "Update Sill on \(mac) to use this." }
+        guard deviceDisplayOn else { return "The Desktop shows \(mac)’s own screen, scaled to fit." }
+        return "\(mac) gets an extra screen sized to this \(device), so the Desktop’s picture is pixel for pixel. Drag windows onto it on \(mac)."
     }
 
     /// The Mac's window list said it takes the gestures (`WindowList.gestures`).

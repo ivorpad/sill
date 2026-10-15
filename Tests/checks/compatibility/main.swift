@@ -173,6 +173,26 @@ let gestureMessage = StreamMessage(kind: .gesture, timestamp: 1, isKeyframe: fal
 check(StreamMessage.parseHeader(gestureMessage)?.kind == .gesture, "the gesture's header parses")
 check(gestureMessage.count == StreamMessage.headerLength + Wire.encode(gesture).count, "one header, then the JSON")
 
+// A display for the device (docs/sidecar-desktop-plan.md P2): the viewport's `pixelScale` and
+// `deviceDisplay`, the window list's `deviceDisplay` and `deviceDisplayLive`; additive both ways.
+let panel = Viewport(width: 1366, height: 940, scale: 1, fps: 60, pixelScale: 2, deviceDisplay: true)
+check(json(panel).contains(#""pixelScale":2"#) && json(panel).contains(#""deviceDisplay":true"#), "a viewport carries both keys: \(json(panel))")
+check(json(Viewport(width: 1366, height: 940, scale: 1, deviceDisplay: false)).contains(#""deviceDisplay":false"#), "false is sent, not left out")
+let plainViewport = json(Viewport(width: 1366, height: 940, scale: nil, fps: 60))
+check(!plainViewport.contains("pixelScale") && !plainViewport.contains("deviceDisplay"), "nil keys are left out: \(plainViewport)")
+let oldViewport = Wire.decode(Viewport.self, from: Data(#"{"width":1366,"height":940,"scale":1,"localCursor":true,"fps":120}"#.utf8))
+check(oldViewport != nil && oldViewport?.pixelScale == nil && oldViewport?.deviceDisplay == nil && oldViewport?.fps == 120,
+      "an older device's viewport decodes, both nil")
+check(Wire.decode(Viewport.self, from: Wire.encode(panel)) == panel, "the viewport round-trips")
+check(Wire.decode(Viewport.self, from: Data(#"{"width":1,"height":1,"deviceDisplay":"yes"}"#.utf8)) == nil, "a string as deviceDisplay does not decode")
+let offers = WindowList(macName: "Mac mini", windows: [], active: .desktop, launchID: "L", hostVersion: "0.6", protocol: 1, gestures: 1,
+                        deviceDisplay: 1, deviceDisplayLive: true)
+check(json(offers).contains(#""deviceDisplay":1"#) && json(offers).contains(#""deviceDisplayLive":true"#), "a list from a host that offers it: \(json(offers))")
+check(!json(takes).contains("deviceDisplay"), "a list without them leaves both keys out: \(json(takes))")
+check(decodedOld != nil && decodedOld?.deviceDisplay == nil && decodedOld?.deviceDisplayLive == nil, "an older host's list decodes, both nil")
+let offersBack = Wire.decode(WindowList.self, from: Wire.encode(offers))
+check(offersBack?.deviceDisplay == 1 && offersBack?.deviceDisplayLive == true && offersBack?.gestures == 1, "the list round-trips")
+
 // For H4: what cb0ec55's StreamProtocol must read.
 let out = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : nil
 if let out {

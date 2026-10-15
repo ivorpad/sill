@@ -40,6 +40,9 @@ package enum VirtualDisplaySelfTest {
         print("  private API: all \(VirtualDisplay.privateAPISurface.count) selectors present")
         let before = onlineDisplays()
         print("  displays before: \(before)")
+        let probe = Probe.parse(CommandLine.arguments)
+        let mainBefore = describeMain()
+        if probe.active { print("  main display before: \(mainBefore)") }
 
         let t0 = Date()
         let d: VirtualDisplay
@@ -47,15 +50,34 @@ package enum VirtualDisplaySelfTest {
             // `--virtual-display-selftest 120` asks for a 120 Hz display (what a ProMotion device gets).
             let args = CommandLine.arguments
             let hz = args.firstIndex(of: "--virtual-display-selftest").flatMap { i in args.count > i + 1 ? Double(args[i + 1]) : nil } ?? 60
-            d = try VirtualDisplay(name: "Sill", widthPt: 1000, heightPt: 700, scale: 2, refreshHz: hz,
-                                   vendorID: VirtualStage.vendorID, productID: VirtualStage.productID, serialNum: VirtualStage.serialNum)
+            if probe.active {
+                // A device display's size (docs/sidecar-desktop-plan.md, P1a/P1c), under its own
+                // test identity, never the window stage's 0x5111/1/1 that Sill.app holds.
+                d = try VirtualDisplay(name: "Sill probe", widthPt: probe.width, heightPt: probe.height, scale: 2, refreshHz: hz,
+                                       vendorID: VirtualStage.vendorID, productID: 0x0002, serialNum: 0xBEEF,
+                                       probeHiDPI: probe.hiDPI)
+                print("  probe: \(probe.width)×\(probe.height) pt, identity 0x5111/2/0xBEEF, setHiDPI: \(probe.hiDPI.map(String.init) ?? "1 (scale 2)")")
+            } else {
+                d = try VirtualDisplay(name: "Sill", widthPt: 1000, heightPt: 700, scale: 2, refreshHz: hz,
+                                       vendorID: VirtualStage.vendorID, productID: VirtualStage.productID, serialNum: VirtualStage.serialNum)
+            }
             print("  requested refresh: \(Int(hz)) Hz")
         } catch {
             print("  FAIL create: \(error)")
             return 2
         }
         let createdMs = Int(Date().timeIntervalSince(t0) * 1000)
-        let online = await d.waitUntilOnline(timeout: 3)
+        // With a raw setHiDPI: value (P1c) the requested-mode selection would force the 2× mode
+        // and hide what macOS made of it: wait for bounds alone and report the mode as it is.
+        let online: Bool
+        if probe.hiDPI != nil {
+            let until = Date().addingTimeInterval(3)
+            while CGDisplayCopyDisplayMode(d.displayID) == nil, Date() < until { try? await Task.sleep(for: .milliseconds(50)) }
+            try? await Task.sleep(for: .seconds(1))   // let macOS settle on a mode before reading it
+            online = CGDisplayCopyDisplayMode(d.displayID) != nil
+        } else {
+            online = await d.waitUntilOnline(timeout: 3)
+        }
         let onlineMs = Int(Date().timeIntervalSince(t0) * 1000)
         let px = d.pixelSize
         print("  created id \(d.displayID) in \(createdMs) ms; online at requested mode: \(online) after \(onlineMs) ms")
@@ -64,7 +86,16 @@ package enum VirtualDisplaySelfTest {
         // Input reachability: the host maps device touches to global coordinates on this display
         // and posts HID mouse events there. If the window server keeps the cursor off virtual
         // displays, every click lands somewhere else. Warp, post a move, read back, restore.
-        if let before = CGEvent(source: nil)?.location {
+        if let mode = CGDisplayCopyDisplayMode(d.displayID) {
+            print("  current mode: \(mode.width)×\(mode.height) pt @ \(mode.pixelWidth)×\(mode.pixelHeight) px, \(Int(mode.refreshRate)) Hz")
+        }
+        if probe.active {
+            let mirrorOf = CGDisplayMirrorsDisplay(d.displayID)
+            print("  mirror: in mirror set \(CGDisplayIsInMirrorSet(d.displayID) != 0), mirrors \(mirrorOf) (0: extended); main display mirrors \(CGDisplayMirrorsDisplay(CGMainDisplayID()))")
+            print("  placement: CGDisplayBounds \(CGDisplayBounds(d.displayID)), main display \(CGMainDisplayID())")
+        }
+        // The probe never moves the pointer or posts an event (a probe run beside Sill.app).
+        if !probe.active, let before = CGEvent(source: nil)?.location {
             let target = CGPoint(x: d.bounds.midX, y: d.bounds.midY)
             CGWarpMouseCursorPosition(target)
             usleep(30_000)
@@ -99,7 +130,13 @@ package enum VirtualDisplaySelfTest {
         while Date().timeIntervalSince(t1) < 3, !listed {
             if let c = await WindowCatalog.shareableContent(excludingDesktopWindows: true, onScreenWindowsOnly: true, timeout: 3) {
                 answered = true
-                if c.displays.contains(where: { $0.displayID == d.displayID }) { listed = true; break }
+                if let scd = c.displays.first(where: { $0.displayID == d.displayID }) {
+                    listed = true
+                    print("  SCDisplay: width \(scd.width) height \(scd.height) frame \(scd.frame)")
+                    let filter = SCContentFilter(display: scd, excludingWindows: [])
+                    print("  SCContentFilter: contentRect \(filter.contentRect), pointPixelScale \(filter.pointPixelScale)")
+                    break
+                }
             }
             try? await Task.sleep(for: .milliseconds(100))
         }
@@ -118,6 +155,37 @@ package enum VirtualDisplaySelfTest {
         let gone = !onlineDisplays().contains(id)
         print("  destroyed: gone from CGGetOnlineDisplayList after \(Int(Date().timeIntervalSince(t2) * 1000)) ms: \(gone)")
         print("  displays after: \(onlineDisplays())")
+        if probe.active {
+            let mainAfter = describeMain()
+            print("  main display after: \(mainAfter) (\(mainAfter == mainBefore ? "unchanged" : "CHANGED"))")
+        }
         return (online || px.width > 0) && gone ? 0 : 3
+    }
+
+    private static func describeMain() -> String {
+        let id = CGMainDisplayID()
+        let m = CGDisplayCopyDisplayMode(id)
+        return "id \(id) bounds \(CGDisplayBounds(id)) mode \(m?.width ?? 0)×\(m?.height ?? 0) pt @ \(m?.pixelWidth ?? 0)×\(m?.pixelHeight ?? 0) px"
+    }
+
+    /// Probe flags (docs/sidecar-desktop-plan.md P1a/P1c): `--vd-size=WxH` in points (scale 2),
+    /// `--vd-hidpi=N` the raw setHiDPI: value. Either one switches to the test identity and skips
+    /// the cursor check.
+    private struct Probe {
+        var width = 1000, height = 700
+        var hiDPI: UInt32?
+        var active = false
+        static func parse(_ args: [String]) -> Probe {
+            var p = Probe()
+            for a in args {
+                if a.hasPrefix("--vd-size=") {
+                    let wh = a.dropFirst("--vd-size=".count).split(separator: "x").compactMap { Int($0) }
+                    if wh.count == 2 { p.width = wh[0]; p.height = wh[1]; p.active = true }
+                } else if a.hasPrefix("--vd-hidpi=") {
+                    p.hiDPI = UInt32(a.dropFirst("--vd-hidpi=".count)); p.active = true
+                }
+            }
+            return p
+        }
     }
 }

@@ -56,12 +56,21 @@ public struct WindowList: Codable {
     /// Whether this host takes the shared clipboard (kind 29, Clipboard.swift): its generation, 1.
     /// Nil from every host before it, to which a device sends no kind 29.
     public var clipboard: Int?
+    /// 1: this host offers a display for the device (docs/sidecar-desktop-plan.md), a virtual
+    /// screen sized to the panel, which a device asks for with `Viewport.deviceDisplay`. Nil from
+    /// every host before 2026-10-15, to which a device sends no `deviceDisplay`.
+    public var deviceDisplay: Int?
+    /// The live Desktop is the display made for the device that receives this list. Nil or false:
+    /// the Desktop, if it streams, is the Mac's own screen (or another device's display).
+    public var deviceDisplayLive: Bool?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
-                hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil, clipboard: Int? = nil) {
+                hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil, clipboard: Int? = nil,
+                deviceDisplay: Int? = nil, deviceDisplayLive: Bool? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.clipboard = clipboard
+        self.deviceDisplay = deviceDisplay; self.deviceDisplayLive = deviceDisplayLive
     }
 }
 

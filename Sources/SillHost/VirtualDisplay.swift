@@ -76,13 +76,18 @@ final class VirtualDisplay {
     }
 
     let name: String
-    let widthPt: Int
-    let heightPt: Int
+    /// The current mode's size: set at init, and again by `setMode`.
+    private(set) var widthPt: Int
+    private(set) var heightPt: Int
     let scale: Int
     let refreshHz: Double
     let vendorID: UInt32
     let productID: UInt32
     let serialNum: UInt32
+    /// The largest mode `setMode` can take, in points: the descriptor's maxPixels ÷ scale, fixed at
+    /// creation.
+    let maxWidthPt: Int
+    let maxHeightPt: Int
 
     /// Zero after `destroy()`.
     private(set) var displayID: CGDirectDisplayID = 0
@@ -111,6 +116,9 @@ final class VirtualDisplay {
     ///   - widthPt, heightPt: the size windows see, in points.
     ///   - scale: 2 for HiDPI (backing store is widthPt×2 by heightPt×2 pixels), 1 for not.
     ///   - vendorID, productID, serialNum: display identity; keep stable (see type docs).
+    ///   - maxSidePt: a display that will change its mode (`setMode`, a device display rotating):
+    ///     maxPixels are made for a square of this side in points, so any mode within it fits.
+    ///     Nil: maxPixels are the first mode's own, as before.
     init(name: String,
          widthPt: Int,
          heightPt: Int,
@@ -118,7 +126,9 @@ final class VirtualDisplay {
          refreshHz: Double = 60,
          vendorID: UInt32 = 0x5111,
          productID: UInt32 = 0x0001,
-         serialNum: UInt32 = 1) throws {
+         serialNum: UInt32 = 1,
+         maxSidePt: Int? = nil,
+         probeHiDPI: UInt32? = nil) throws {
         guard widthPt >= 320, heightPt >= 240, widthPt <= 8192, heightPt <= 8192 else {
             throw Failure.invalidSize("\(widthPt)×\(heightPt) pt is outside 320×240…8192×8192")
         }
@@ -132,7 +142,15 @@ final class VirtualDisplay {
         self.productID = productID
         self.serialNum = serialNum
 
-        let pxW = widthPt * scale, pxH = heightPt * scale
+        // A square of `maxSidePt` when given (never under the first mode, never over 8192 px).
+        let capW = maxSidePt.map { min(max($0, widthPt), 8192 / scale) } ?? widthPt
+        let capH = maxSidePt.map { min(max($0, heightPt), 8192 / scale) } ?? heightPt
+        self.maxWidthPt = capW
+        self.maxHeightPt = capH
+        // `probeHiDPI` (the self-test's `--vd-hidpi`, probe P1c only): the raw value given to
+        // setHiDPI:, with maxPixels sized for it, to see whether a factor above 2 means anything.
+        let maxScale = max(scale, Int(probeHiDPI ?? 0))
+        let pxW = capW * maxScale, pxH = capH * maxScale
 
         // --- Descriptor ---------------------------------------------------------------
         let descriptor = try Runtime.newObject("CGVirtualDisplayDescriptor")
@@ -174,7 +192,7 @@ final class VirtualDisplay {
         // `waitUntilOnline` selects the requested one explicitly with public API.
         let mode = try Runtime.newMode(width: UInt32(widthPt), height: UInt32(heightPt), refreshRate: refreshHz)
         let settings = try Runtime.newObject("CGVirtualDisplaySettings")
-        try Runtime.setUInt32(settings, "setHiDPI:", scale == 2 ? 1 : 0)
+        try Runtime.setUInt32(settings, "setHiDPI:", probeHiDPI ?? (scale == 2 ? 1 : 0))
         try Runtime.setObject(settings, "setModes:", [mode] as NSArray)
         guard try Runtime.applySettings(display, settings) else { throw Failure.applySettingsFailed }
 
@@ -185,6 +203,24 @@ final class VirtualDisplay {
     }
 
     deinit { destroy() }
+
+    /// Gives the live display another mode (a device display rotating, or its Aa changing): new
+    /// settings with that one mode, as Sidecar re-applies its settings on rotation. False when the
+    /// mode is past `maxWidthPt`×`maxHeightPt` or macOS refused it; the caller then makes a new
+    /// display. On true the caller awaits `waitUntilOnline` again: macOS may bring the new mode up
+    /// at 1× first, as at creation. Main actor.
+    func setMode(widthPt w: Int, heightPt h: Int) throws -> Bool {
+        guard let display = object, displayID != 0 else { return false }
+        guard w >= 320, h >= 240, w <= maxWidthPt, h <= maxHeightPt else { return false }
+        let mode = try Runtime.newMode(width: UInt32(w), height: UInt32(h), refreshRate: refreshHz)
+        let settings = try Runtime.newObject("CGVirtualDisplaySettings")
+        try Runtime.setUInt32(settings, "setHiDPI:", scale == 2 ? 1 : 0)
+        try Runtime.setObject(settings, "setModes:", [mode] as NSArray)
+        guard try Runtime.applySettings(display, settings) else { return false }
+        widthPt = w
+        heightPt = h
+        return true
+    }
 
     /// True when the current mode is the requested point size at the requested scale.
     var hasRequestedMode: Bool {

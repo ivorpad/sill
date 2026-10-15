@@ -29,7 +29,10 @@ package final class StreamCoordinator {
     private var clientFPS: [ObjectIdentifier: Int] = [:]
     private var wantedFPS: Int { min(maxFPS, max(24, clientFPS.values.max() ?? 60)) }
     /// What the next pipeline will run at: the software encoder is not asked for more than 60.
-    private var effectiveFPS: Int { useSoftwareEncoder ? min(wantedFPS, 60) : wantedFPS }
+    /// The software encoder is not asked for more than 60, and neither is a device display
+    /// (`deviceDisplayFPS`). Read off the running pipeline (`runningDeviceDisplay`), which `select`
+    /// clears before it reads this, so a restart compares like with like and never loops.
+    private var effectiveFPS: Int { useSoftwareEncoder || runningDeviceDisplay != nil ? min(wantedFPS, 60) : wantedFPS }
     /// The bitrate knob is per 60 fps; a faster stream gets proportionally more so each frame
     /// keeps its share of bits.
     private var streamBitrate: Int { bitrate * fps / 60 }
@@ -169,6 +172,44 @@ package final class StreamCoordinator {
     /// The client's last stream panel size and text scale. One stream, so with several clients
     /// the last one to report wins.
     private var viewport: Viewport?
+    /// Each connection's last viewport: the device display follows its picker's, not the last one's.
+    private var viewports: [ObjectIdentifier: Viewport] = [:]
+
+    // MARK: A display for the device (docs/sidecar-desktop-plan.md)
+
+    /// The device display's owner: made when a device whose viewport says `deviceDisplay` picks the
+    /// Desktop, gone when anything else is picked or that device leaves.
+    let deviceDisplay = DeviceDisplay()
+    /// Whether this host makes one (`WindowList.deviceDisplay`): the AppKit loop, which a virtual
+    /// display needs, and the private API present. Read once at init. A synthetic host with the loop
+    /// says so too but never makes one: its Desktop is the test pattern at the display's size.
+    private let deviceDisplayOffered: Bool
+    /// The connection that last picked the Desktop: the device display is its own (Decision 4: the
+    /// display follows the device that picked it, others see it scaled).
+    private var desktopPicker: ObjectIdentifier?
+    /// Who sent `pickArrivedWhileSwitching`, taken with it.
+    private var pickerArrivedWhileSwitching: ObjectIdentifier?
+    /// What the running Desktop pipeline serves: the picker's display at its mode, or nil for the
+    /// Mac's own screen and every other source. Set by `select` before the pipeline starts.
+    private var runningDeviceDisplay: DeviceDisplayTarget?
+    /// A target that failed to come up: not tried again until the target changes, so a viewport
+    /// re-sent for the pointer does not retry it every time.
+    private var deviceDisplayFailedFor: DeviceDisplayTarget?
+    private var deviceDisplayFailures = 0
+    private var deviceDisplayLosses = 0
+    /// Set after repeated failures or losses: the Desktop is the Mac's screen for the rest of the run.
+    private var deviceDisplayProblem: String?
+    /// Every device display runs at 60: 2732×1880 holds 60.0 fps on the hardware encoder and drops
+    /// ~15 a second at 120 (probe P1b).
+    static let deviceDisplayFPS = 60
+
+    struct DeviceDisplayTarget: Equatable {
+        let picker: ObjectIdentifier
+        let mode: DeviceDisplayGeometry
+        let serial: UInt32
+        /// The square, in points, a new display is made for (DeviceDisplayGeometry.capacitySide).
+        let capacity: Int
+    }
     /// Each connection's kind 17 changes of the last second (applied or refused), and when its
     /// "ignored" line was last printed: `settingsPerSecond` a second, one line a second at most.
     private var settingsArrivals: [ObjectIdentifier: [CFAbsoluteTime]] = [:]
@@ -283,6 +324,8 @@ package final class StreamCoordinator {
         self.synthetic = synthetic
         self.appKitLoop = appKitLoop
         self.hostVersion = hostVersion
+        // A display for a device needs the AppKit loop and the private API (VirtualDisplay.swift).
+        deviceDisplayOffered = appKitLoop && VirtualDisplay.checkPrivateAPI().isEmpty
         let env = ProcessInfo.processInfo.environment
         let path = PointerTestHooks.pointerPath(synthetic: synthetic, environment: env)
         let software = PointerTestHooks.softwareEncoder(synthetic: synthetic, environment: env)
@@ -330,6 +373,8 @@ package final class StreamCoordinator {
         remote?.attach(server: server, status: status, macName: macName, requirePairing: config.requirePairing)
         catalog.preferMainDisplay = virtualDisplay   // the Desktop source must never capture the virtual display
         stage.onLost = { [weak self] in Task { @MainActor in await self?.stageLost() } }
+        deviceDisplay.onWarp = { [pointer] in pointer.sillMoved() }
+        deviceDisplay.onLost = { [weak self] in Task { @MainActor in await self?.deviceDisplayLost() } }
         status.update { $0.synthetic = synthetic; $0.virtualDisplayOn = config.virtualDisplay }
         // Every change of the snapshot re-publishes the devices' settings state (deduplicated, so
         // the once-a-second stats send nothing). One before `server.start()` reaches nobody, and
@@ -390,6 +435,9 @@ package final class StreamCoordinator {
                 self.lastPublished[id] = nil
                 self.linkReports[id] = nil
                 if self.flipWait == id { self.flipWait = nil }
+                self.viewports[id] = nil
+                let pickerLeft = self.desktopPicker == id
+                if pickerLeft { self.desktopPicker = nil }
                 self.menus.clientLeft(connection)
                 self.releaseKeys(of: id)
                 self.status.update { $0.devices.removeAll { $0.id == id } }
@@ -399,6 +447,11 @@ package final class StreamCoordinator {
                 // the flip too (select's commit), so a device that leaves costs one.
                 if self.active != .none, self.catalog.clientCount > 1, self.effectiveFPS != self.fps {
                     await self.select(self.active)
+                } else if pickerLeft, !self.routes.isEmpty, self.active == .desktop, self.runningDeviceDisplay != nil {
+                    // The device whose display streamed left; the others get the Mac's screen. With
+                    // nobody left, the count's handler deselects instead.
+                    if self.switching { self.viewportArrivedWhileSwitching = true } else { await self.applyViewportToActiveWindow() }
+                    if flipped { await self.applyPending() }
                 } else if flipped {
                     await self.applyPending()
                 }
@@ -410,7 +463,7 @@ package final class StreamCoordinator {
                 let wasEmpty = self.catalog.clientCount == 0
                 self.catalog.clientCount = count          // the catalog idles itself at 0
                 // Nobody is watching: stop capturing and encoding. The next client picks afresh.
-                if count == 0 { self.viewport = nil; self.clientFPS = [:] }   // the next device starts from scratch
+                if count == 0 { self.viewport = nil; self.clientFPS = [:]; self.viewports = [:]; self.desktopPicker = nil }   // the next device starts from scratch
                 if count == 0 { self.gestureChords.forget() }                 // and did not open a view it could close
                 // On the software encoder, the hardware is checked only while someone watches.
                 if count == 0 { self.stopRecheck() } else { self.devicesPresent(firstArrived: wasEmpty) }
@@ -729,7 +782,7 @@ package final class StreamCoordinator {
     private func restartNeeded(for new: HostConfig, away: Bool) -> Bool {
         guard active != .none else { return false }
         let wanted = min(new.maxFPS, max(24, clientFPS.values.max() ?? 60))
-        let newFPS = useSoftwareEncoder ? min(wanted, 60) : wanted
+        let newFPS = useSoftwareEncoder || runningDeviceDisplay != nil ? min(wanted, 60) : wanted
         let pair = new.effective(away: away)
         let newScale = useSoftwareEncoder ? min(pair.captureScale, 1.0) : pair.captureScale
         if newFPS != fps || newScale != captureScale { return true }
@@ -763,7 +816,7 @@ package final class StreamCoordinator {
             || old.requirePairing != next.requirePairing {
             remote?.apply(next)
         }
-        catalog.preferMainDisplay = next.virtualDisplay   // the Desktop source must never capture the virtual display
+        catalog.preferMainDisplay = next.virtualDisplay || deviceDisplay.exists   // the Mac's screen, never a Sill display
         if old.virtualDisplay && !next.virtualDisplay {
             stage.release()        // idempotent: select has already sent a staged window home
             status.update { $0.lastStageFailure = nil }
@@ -885,7 +938,7 @@ package final class StreamCoordinator {
             if case .window = source { gestureChords.forget() }
             // A pick from the device's switcher: the device never selects a window by itself (its
             // automatic requests are for the Desktop only).
-            await handlePick(source)
+            await handlePick(source, from: ObjectIdentifier(connection))
         case .windowCommand:
             // The bar's long-press menu: the window's own traffic lights, pressed through
             // Accessibility. The staged window's element is already matched; others are looked up.
@@ -965,6 +1018,7 @@ package final class StreamCoordinator {
             guard let v = Wire.decode(Viewport.self, from: message.payload) else { return }
             viewport = v
             let id = ObjectIdentifier(connection)
+            viewports[id] = v
             clientFPS[id] = v.fps ?? 60
             // The flip its connection made waited for this, its rate (`flipAwaits`): the restart the
             // rate needs takes the flip too, and the flip alone restarts once when the rate needs none.
@@ -1063,7 +1117,7 @@ package final class StreamCoordinator {
             // The test pattern with the TEST ONLY scripted pointer: its own space, where a test
             // client's input moves that pointer (a synthetic host posts nothing).
             if synthetic, pointer.hasTestPointer { return Self.testPatternRect }
-            return catalog.display?.frame
+            return desktopFrame()
         case .window(let id):
             // On the virtual display the video is the captured crop, not the whole window: an app
             // that took a larger size than asked overhangs the display and the overhang is not shown.
@@ -1106,7 +1160,7 @@ package final class StreamCoordinator {
             return nil
         case .desktop:
             if synthetic { return pointer.hasTestPointer ? .rect(Self.testPatternRect) : nil }
-            return catalog.display.map { .rect($0.frame) }
+            return desktopFrame().map { .rect($0) }
         case .window(let id):
             guard !synthetic else { return nil }
             if virtualDisplay, stage.isStaged, let onScreen = stage.captureRectOnScreen { return .rect(onScreen) }
@@ -1143,6 +1197,14 @@ package final class StreamCoordinator {
         // A different rate (a ProMotion device joined, Low Power Mode toggled) needs a new capture
         // interval and encoder session: one restart, whatever the source.
         if active != .none, effectiveFPS != fps { await select(active); return }
+        // The Desktop: its picker's display follows its viewport (a first viewport after the pick,
+        // a rotation, an Aa step, the preference turned on or off), and goes when the picker has
+        // left. One restart; a target that failed is not retried until it changes.
+        if active == .desktop {
+            let want = deviceDisplayTarget()
+            if want != runningDeviceDisplay, want == nil || want != deviceDisplayFailedFor { await select(.desktop) }
+            return
+        }
         if virtualDisplay, stage.isStaged, case .window(let id) = active {
             // One restart: prepare re-places the window on the same display (the display is only
             // recreated if the envelope grew). The client's identical re-send after a switch is a
@@ -1192,11 +1254,19 @@ package final class StreamCoordinator {
     /// user has picked since the watched window closed (StreamClient's window list); an older
     /// device, or a pick made before the device heard of the close, can still let it land during
     /// a restart that follows the user's pick, and then it is queued like the user's own.
-    private func handlePick(_ source: StreamSource) async {
+    ///
+    /// `picker`: the connection that picked. A Desktop pick makes it the Desktop's picker, whose
+    /// display it streams when it asks for one; during a restart of the Desktop, another device's
+    /// Desktop pick is queued, not dropped, as the display then changes hands.
+    private func handlePick(_ source: StreamSource, from picker: ObjectIdentifier?) async {
         if switching {
-            if let r = restartOf, source != r { pickArrivedWhileSwitching = source }
+            if let r = restartOf, source != r || (source == .desktop && picker != nil && picker != desktopPicker) {
+                pickArrivedWhileSwitching = source
+                pickerArrivedWhileSwitching = picker
+            }
             return
         }
+        if source == .desktop, let picker { desktopPicker = picker }
         await select(source, bringForward: true)
     }
 
@@ -1216,7 +1286,9 @@ package final class StreamCoordinator {
             switching = false
             restartOf = nil
             var pick = pickArrivedWhileSwitching
+            let pickedBy = pickerArrivedWhileSwitching
             pickArrivedWhileSwitching = nil
+            pickerArrivedWhileSwitching = nil
             // Requests that arrived mid-switch, applied now that `switching` is clear again (every
             // return path, including the early ones). A last client leaving wins over a viewport
             // and over a queued pick: there is nobody left to fit the window to or stream to.
@@ -1228,14 +1300,14 @@ package final class StreamCoordinator {
                 }
             }
             if catalog.clientCount == 0 { pick = nil }
-            if let pick, pick != active {
+            if let pick, pick != active || (pick == .desktop && pickedBy != nil && pickedBy != desktopPicker) {
                 // The pick's own select fits the latest viewport. Run after it has started, the
                 // viewport tail would resize the old window, which `active` still names mid-switch.
                 viewportArrivedWhileSwitching = false
                 // Through the handler's rule again, not straight to `select`: another restart can
                 // start before this Task runs (a viewport's new rate, an encoder hang, a lost
                 // display), and `select` would drop the pick; the rule queues it behind that one.
-                Task { @MainActor in await self.handlePick(pick) }
+                Task { @MainActor in await self.handlePick(pick, from: pickedBy) }
             } else if viewportArrivedWhileSwitching {
                 viewportArrivedWhileSwitching = false
                 Task { @MainActor in await self.applyViewportToActiveWindow() }
@@ -1270,6 +1342,9 @@ package final class StreamCoordinator {
         releaseKeysOfDevicesThatLeft()
         encoder = nil                  // deinit invalidates the VT session
         server.resetForNewStream()          // every client waits for the next parameter sets + keyframe
+        // The pipeline that ran is gone: nothing serves a device display until the Desktop branch
+        // below says so again (`effectiveFPS` reads it).
+        runningDeviceDisplay = nil
         // New settings take effect here, between pipelines, before the rate, the scale and the
         // stage are worked out for the next one.
         var leftStage = false
@@ -1297,7 +1372,14 @@ package final class StreamCoordinator {
             // Home or away changed (a device joined or left): the pipeline takes the other pair.
             adopt(config, away: awayWanted)
         }
-        fps = effectiveFPS             // the devices' panel rate (highest), or 60 before any has said
+        // The Desktop's picker's display, when it asks for one; anything else removes the display,
+        // its windows sent home first. Capture has stopped above, so nothing captures it as it goes.
+        // A target that just failed is tried again only on a pick, not on a restart.
+        var deviceTarget = source == .desktop ? deviceDisplayTarget() : nil
+        if !bringForward, deviceTarget != nil, deviceTarget == deviceDisplayFailedFor { deviceTarget = nil }
+        if deviceTarget == nil || synthetic { releaseDeviceDisplay() }
+        // The devices' panel rate (highest), or 60 before any has said; 60 at most on a device display.
+        fps = deviceTarget != nil ? min(effectiveFPS, Self.deviceDisplayFPS) : effectiveFPS
         // The devices' links: judged afresh when the stream comes back at another quality or not at
         // all, kept through a restart that keeps it (a window picked, a rotation, a resize).
         judgeLinks(source == .none ? nil : LinkJudge.Quality(bitrate: bitrate, fps: fps, captureScale: Double(captureScale)))
@@ -1383,14 +1465,44 @@ package final class StreamCoordinator {
             // Staged on the virtual display, nothing is activated or raised on select: the window
             // cannot be covered there, and the AX moves that put it there touch no focus.
         case .desktop:
-            if synthetic {
+            if synthetic, let t = deviceTarget {
+                // A test host makes no display: the test pattern at the size the display would
+                // stream, so a test client sees the wire and the mode without a CGVirtualDisplay.
+                let f = deviceDisplayEncodeFactor
+                width = evenPixels(CGFloat(t.mode.encodeWidth) * f); height = evenPixels(CGFloat(t.mode.encodeHeight) * f)
+                describe = "a synthetic test pattern as \(deviceLabel(t.picker))'s display, \(t.mode) (not made: a test host)\(useSoftwareEncoder ? " (software encoder)" : "")"
+                title = "Test Pattern"; kind = .testPattern
+                runningDeviceDisplay = t
+                print("Device display for \(deviceLabel(t.picker)): \(t.mode), serial \(t.serial) (not made: a test host)")
+            } else if synthetic {
                 // A 1512×949-point test pattern: the same size as a typical streamed window, so the
                 // encoder and the fallback see realistic load without Screen Recording.
                 width = evenPixels(1512 * captureScale); height = evenPixels(949 * captureScale)
                 describe = "a synthetic test pattern\(useSoftwareEncoder ? " (software encoder)" : "")"
                 title = "Test Pattern"; kind = .testPattern
             } else {
-                guard let d = catalog.display else { active = .none; broadcastList(); return }
+                // The picker's display, made or re-moded now; on failure the Mac's screen, as before.
+                var onDevice: SCDisplay?
+                if let t = deviceTarget {
+                    catalog.preferMainDisplay = true      // before the display exists: the catalog's Desktop stays the Mac's
+                    do {
+                        onDevice = try await deviceDisplay.ensure(t.mode, serial: t.serial, refreshHz: Self.deviceDisplayFPS, capacitySide: t.capacity)
+                        deviceDisplayFailures = 0
+                        deviceDisplayFailedFor = nil
+                    } catch {
+                        deviceDisplayFailures += 1
+                        deviceDisplayFailedFor = t
+                        print("Device display for \(deviceLabel(t.picker)) failed: \(error). Streaming this Mac's screen instead.")
+                        Stats.shared.bump("dd.fallback")
+                        if deviceDisplayFailures >= 2 { deviceDisplayProblem = "it failed \(deviceDisplayFailures) times (\(error))" }
+                        releaseDeviceDisplay()
+                        // The Mac's screen runs at the devices' own rate, and is judged at it.
+                        fps = effectiveFPS
+                        judgeLinks(LinkJudge.Quality(bitrate: bitrate, fps: fps, captureScale: Double(captureScale)))
+                    }
+                    guard !shuttingDown else { releaseDeviceDisplay(); active = .none; broadcastList(); return }
+                }
+                guard let d = onDevice ?? catalog.display else { active = .none; broadcastList(); return }
                 // Sill's own windows (Settings, Log, the pairing window with its code) never go out
                 // in a Desktop stream. Fixed here at pipeline start: a running SCStream is never
                 // reconfigured, so a host that can show a pairing code (remote access) looks for
@@ -1407,13 +1519,22 @@ package final class StreamCoordinator {
                 } else {
                     filter = SCContentFilter(display: d, excludingWindows: [])
                 }
-                // Never past the display's own pixels: Retina on a 1× display (a 2560×1440 monitor)
-                // made 5120×2880 at 120 fps, four times the pixels with no more detail and nearly
-                // three times what the hardware encoder takes (the iPad got 13 fps).
-                let desktopScale = min(captureScale, CGFloat(filter?.pointPixelScale ?? Float(captureScale)))
-                width = evenPixels(CGFloat(d.width) * desktopScale); height = evenPixels(CGFloat(d.height) * desktopScale)
-                describe = "the whole desktop\(useSoftwareEncoder ? " (software encoder)" : "")"
-                title = "Whole Desktop"; kind = .desktop
+                if let t = deviceTarget, onDevice != nil {
+                    // The device's panel pixels (DeviceDisplayGeometry's encoded size), at 60 (`fps` above).
+                    let f = deviceDisplayEncodeFactor
+                    width = evenPixels(CGFloat(t.mode.encodeWidth) * f); height = evenPixels(CGFloat(t.mode.encodeHeight) * f)
+                    describe = "a display for \(deviceLabel(t.picker)), \(t.mode)\(useSoftwareEncoder ? " (software encoder)" : "")"
+                    title = "Display for \(deviceLabel(t.picker))"; kind = .desktop
+                    runningDeviceDisplay = t
+                } else {
+                    // Never past the display's own pixels: Retina on a 1× display (a 2560×1440 monitor)
+                    // made 5120×2880 at 120 fps, four times the pixels with no more detail and nearly
+                    // three times what the hardware encoder takes (the iPad got 13 fps).
+                    let desktopScale = min(captureScale, CGFloat(filter?.pointPixelScale ?? Float(captureScale)))
+                    width = evenPixels(CGFloat(d.width) * desktopScale); height = evenPixels(CGFloat(d.height) * desktopScale)
+                    describe = "the whole desktop\(useSoftwareEncoder ? " (software encoder)" : "")"
+                    title = "Whole Desktop"; kind = .desktop
+                }
             }
         }
 
@@ -1437,9 +1558,40 @@ package final class StreamCoordinator {
                     print("Could not start streaming \(fallback): \(error)")
                     active = .none
                 }
+            } else if let t = runningDeviceDisplay, !synthetic {
+                // Capture of the device display failed: the display goes, its target is not tried
+                // again until it changes or the device picks the Desktop again, and the Mac's screen
+                // streams instead, as the stage falls back to the real window.
+                print("Capture on the device display failed: \(error); streaming this Mac's screen instead.")
+                Stats.shared.bump("dd.fallback")
+                runningDeviceDisplay = nil
+                deviceDisplayFailures += 1
+                deviceDisplayFailedFor = t
+                if deviceDisplayFailures >= 2 { deviceDisplayProblem = "it failed \(deviceDisplayFailures) times (\(error))" }
+                releaseDeviceDisplay()
+                fps = effectiveFPS
+                judgeLinks(LinkJudge.Quality(bitrate: bitrate, fps: fps, captureScale: Double(captureScale)))
+                if !shuttingDown, let d = catalog.display {
+                    let own = catalog.ownApplication
+                    let mac = own.map { SCContentFilter(display: d, excludingApplications: [$0], exceptingWindows: []) }
+                        ?? SCContentFilter(display: d, excludingWindows: [])
+                    let s = min(captureScale, CGFloat(mac.pointPixelScale))
+                    let fallback = "the whole desktop\(useSoftwareEncoder ? " (software encoder)" : "")"
+                    do {
+                        try await startPipeline(source: source, filter: mac, sourceRect: nil,
+                                                width: evenPixels(CGFloat(d.width) * s), height: evenPixels(CGFloat(d.height) * s),
+                                                describe: fallback, title: "Whole Desktop", kind: .desktop)
+                    } catch {
+                        print("Could not start streaming \(fallback): \(error)")
+                        active = .none
+                    }
+                } else {
+                    active = .none
+                }
             } else {
                 print("Could not start streaming \(describe): \(error)")
                 if virtualDisplay { stage.release() }   // nothing streams: never leave a window on the virtual display
+                runningDeviceDisplay = nil
                 active = .none
             }
         }
@@ -1862,6 +2014,62 @@ package final class StreamCoordinator {
         return (pid, "Test menus: the test pattern's menus are pid \(pid)'s (\(name)); read and pressed without activating it.")
     }
 
+    // MARK: The device display (docs/sidecar-desktop-plan.md)
+
+    /// What `WindowList.deviceDisplay` says to a device: one display for the device that picked
+    /// the Desktop.
+    static let deviceDisplayGeneration = 1
+
+    /// The Desktop's display for its picker now: its viewport asks for one and has a size, the host
+    /// makes them, and nothing has turned them off for the run. Nil: the Mac's own screen.
+    private func deviceDisplayTarget() -> DeviceDisplayTarget? {
+        guard deviceDisplayOffered, deviceDisplayProblem == nil, !shuttingDown,
+              let id = desktopPicker, let route = routes[id], let v = viewports[id], v.deviceDisplay == true,
+              let mode = DeviceDisplayGeometry(panelWidth: v.width, panelHeight: v.height, pixelScale: v.pixelScale, textScale: v.scale),
+              let side = DeviceDisplayGeometry.capacitySide(panelWidth: v.width, panelHeight: v.height, pixelScale: v.pixelScale)
+        else { return nil }
+        return DeviceDisplayTarget(picker: id, mode: mode, serial: DeviceDisplayGeometry.serial(fingerprint: route.fingerprint), capacity: side)
+    }
+
+    /// Resolution on the device display: Retina (2) is its pixels, Standard (1) and the software
+    /// encoder (which runs at points) half of them, as on every other source.
+    private var deviceDisplayEncodeFactor: CGFloat { min(1, captureScale / CGFloat(DeviceDisplayGeometry.scale)) }
+
+    /// The Desktop's rectangle in global points: the device display's while it streams, else the
+    /// Mac's screen (the catalog's display).
+    private func desktopFrame() -> CGRect? {
+        if runningDeviceDisplay != nil, !synthetic, let b = deviceDisplay.bounds { return b }
+        return catalog.display?.frame
+    }
+
+    /// The display gone (its windows home first), and the catalog free to take any display again.
+    private func releaseDeviceDisplay() {
+        deviceDisplay.release()
+        catalog.preferMainDisplay = virtualDisplay
+    }
+
+    /// The paired name, or the device's own, for the log and the Mac's menu.
+    private func deviceLabel(_ id: ObjectIdentifier) -> String {
+        let d = status.snapshot.devices.first { $0.id == id }
+        return d?.name ?? routes[id]?.pairedName ?? "a device"
+    }
+
+    /// The window server removed the device display (sleep, display arbitration). Its windows are on
+    /// a real display already. Make it again, or after repeated losses stream the Mac's screen for
+    /// the rest of the run.
+    private func deviceDisplayLost() async {
+        deviceDisplayLosses += 1
+        catalog.preferMainDisplay = virtualDisplay
+        print("The system removed the device display.")
+        if deviceDisplayLosses > 2 {
+            deviceDisplayProblem = "the system removed it \(deviceDisplayLosses) times"
+            print("Device display off for this run: \(deviceDisplayProblem!).")
+        }
+        if active == .desktop, runningDeviceDisplay != nil {
+            if switching { viewportArrivedWhileSwitching = true } else { await select(.desktop) }
+        }
+    }
+
     // MARK: Virtual display lifecycle
 
     /// The window server removed the virtual display (sleep/wake, display arbitration). The stage
@@ -1889,6 +2097,7 @@ package final class StreamCoordinator {
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
         shuttingDown = true
         stage.release()
+        deviceDisplay.release()      // its windows home first, synchronous like the stage's
     }
 
     /// The CLI's default path at a signal (HostShutdown.installKeyRelease), just before it dies of it:
@@ -2277,7 +2486,9 @@ package final class StreamCoordinator {
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
                                                       gestures: TrackpadGesture.generation,
-                                                      clipboard: config.clipboardPolicy.advertised(away: routes[id]?.isAway ?? true))))
+                                                      clipboard: config.clipboardPolicy.advertised(away: routes[id]?.isAway ?? true),
+                                                      deviceDisplay: deviceDisplayOffered ? Self.deviceDisplayGeneration : nil,
+                                                      deviceDisplayLive: active == .desktop && runningDeviceDisplay?.picker == id ? true : nil)))
     }
 
     /// Each connection its own list, since `clipboard` differs between them; one that has not had its
@@ -2325,8 +2536,8 @@ package final class StreamCoordinator {
     /// was, which shows a hidden Dock (DockEdge.pixel keeps it on the screen's last row).
     private func revealDock(atScreenX screenX: CGFloat, from device: KeyStrokes.Device) async {
         print("Dock: the pointer held at the window's bottom edge; streaming the Desktop")
-        await handlePick(.desktop)
-        guard active == .desktop, let display = catalog.display?.frame, display.width > 0 else { return }
+        await handlePick(.desktop, from: device)
+        guard active == .desktop, let display = desktopFrame(), display.width > 0 else { return }
         let x = Double(min(max((screenX - display.minX) / display.width, 0), 1))
         deliver(.pointer(.move, x: x, y: 1), in: display, from: device)
     }

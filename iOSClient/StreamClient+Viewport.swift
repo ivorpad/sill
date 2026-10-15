@@ -12,6 +12,7 @@ import StreamProtocol
 // through `setLocalCursor`. Everything here is main thread.
 extension StreamClient {
     /// Tell the host how big the stream panel is and how the Mac window should be sized to it.
+    /// Every viewport carries the screen's scale and the Desktop preference (`wantedDeviceDisplay`).
     /// A viewport that leaves `localCursor` nil (StreamScreen measures panels and knows nothing
     /// about pointers) gets the current flag filled in, so a rotation or an Aa change never puts
     /// the Mac cursor back under a client-drawn one. Remembers what went out in `lastViewport`.
@@ -19,6 +20,10 @@ extension StreamClient {
     func sendViewport(_ v: Viewport) {
         var v = v
         if v.localCursor == nil { v.localCursor = localCursorState.wanted }
+        // Both from the state now, whatever the viewport carried: a re-send after a move or a
+        // setting change says what this device and this Mac say today.
+        v.pixelScale = Double(Self.screenScale())
+        v.deviceDisplay = wantedDeviceDisplay
         lastViewport = v
         send(.viewport, payload: Wire.encode(v))
     }
@@ -83,6 +88,17 @@ extension StreamClient {
         // `connectedScenes` is unordered: prefer the scene the user is looking at.
         let screen = (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first)?.screen
         return max(30, screen?.maximumFramesPerSecond ?? 60)
+    }
+
+    /// The scale of the screen the user is looking at (`UIScreen.scale`: 2 on iPads, 3 on most
+    /// iPhones), the scene's screen as `screenMaximumFPS` finds it. The Mac sizes a display for this
+    /// device in its pixels.
+    static func screenScale() -> CGFloat {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let screen = (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first)?.screen
+        // nativeScale, not scale: under Display Zoom a 3× phone's scale stays 3 while its points map
+        // to ~2.88 real pixels, and the display is sized to the real ones.
+        return screen?.nativeScale ?? 2
     }
 }
 

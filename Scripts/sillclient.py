@@ -12,6 +12,9 @@ usage: sillclient.py PORT [seconds] [desktop|none|window:ID] [flags...]
                      in send order. Keys: maxFPS, bitrate, captureScale, prioritizeSpeed,
                      virtualDisplay, directWireless; booleans accept 1/0/true/false/on/off
   --raw17=JSON@T     send this literal kind 17 payload T seconds in (split on the last @)
+  --raw9=JSON@T      send this literal viewport (kind 9) T seconds in, e.g. a device display's:
+                     '{"width":1366,"height":940,"fps":60,"pixelScale":2,"deviceDisplay":true}@1'.
+                     The window list line shows deviceDisplay= and deviceDisplayLive= when the host sends them
   --pick=SRC@T       a timed selectSource: none, desktop or window:ID
   --stats            send ClientStats (kind 12) once a second as device "sillclient", so the host
                      logs a name for this client
@@ -130,7 +133,7 @@ SET_KEYS = {"maxFPS", "bitrate", "captureScale", "prioritizeSpeed", "virtualDisp
 # Away from home (docs/remote-bundle-plan.md): read from the state's `away`, and its `link`'s state.
 AWAY_KEYS = {"homeBitrate", "homeCaptureScale", "awayBitrate", "awayCaptureScale", "thisConnectionAway", "awayRunning"}
 EXPECT_KEYS = SET_KEYS | {"persistent", "virtualDisplayAvailable", "linkState"} | AWAY_KEYS
-TIMED = ("set", "raw17", "pick", "fps-after", "stop-ping", "stop-read", "pairing-wanted", "fetch", "press", "raw25", "raw27",
+TIMED = ("set", "raw17", "raw9","pick", "fps-after", "stop-ping", "stop-read", "pairing-wanted", "fetch", "press", "raw25", "raw27",
          "move", "tap", "key", "input", "gesture", "raw28")
 INPUT = ("move", "tap", "key", "input")
 # What --gesture may send: TrackpadGesture's six names (Gesture.swift). Anything else goes with --raw28.
@@ -678,6 +681,8 @@ def fire(e, now):
         s.sendall(msg(17, json.dumps(change).encode())); print(f"  sent change {json.dumps(change)} at {at}")
     elif name == "raw17":
         s.sendall(msg(17, text.encode())); print(f"  sent raw kind 17 {text} at {at}")
+    elif name == "raw9":
+        s.sendall(msg(9, text.encode())); print(f"  sent raw viewport {text} at {at}")
     elif name == "pick":
         s.sendall(msg(6, json.dumps(parsed).encode())); print(f"  sent pick {text} at {at}")
     elif name == "fps-after":
@@ -761,7 +766,9 @@ while time.time() - t0 < dur:
         elif kind == 11:
             rtt = (time.time() - struct.unpack(">d", payload)[0]) * 1000; rtts.append(rtt)
         elif kind == 2:
-            d = json.loads(payload); print(f"  windowList: {len(d.get('windows', []))} windows, active={d.get('active')}")
+            d = json.loads(payload)
+            dd = "".join(f" {k}={d[k]}" for k in ("deviceDisplay", "deviceDisplayLive") if k in d)
+            print(f"  windowList: {len(d.get('windows', []))} windows, active={d.get('active')}{dd}")
         elif kind == 18:
             ok, i = verify_macinfo(payload, mac_pin)
             addrs = ",".join(f"{a['host']}{':' + str(a['port']) if a.get('port') else ''}/{a['kind']}/{a['via']}" for a in i.get("addresses", []))

@@ -1075,7 +1075,7 @@ private struct TopBar: View {
                 .tourTarget(.keyboard)
 
             button(open: client.active == .desktop, symbol: "desktopcomputer", label: "Desktop",
-                   accessibilityLabel: "Show the full Mac desktop",
+                   accessibilityLabel: client.desktopAccessibilityLabel,
                    action: { client.select(.desktop) })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)

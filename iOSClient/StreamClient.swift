@@ -741,6 +741,13 @@ final class StreamClient: ObservableObject {
     /// Whether the last session's Mac shared the clipboard as it ended (`ClipboardListAction`): only
     /// then does a copy made here while there was no session go at the next one.
     var clipboardSharedLastSession = false
+    /// Whether this session's Mac offers a display for this device (`WindowList.deviceDisplay`): 1
+    /// does, nil from a Mac before 2026-10-15, to which viewports carry no `deviceDisplay`. Cleared
+    /// with the session.
+    @Published var hostDeviceDisplay: Int?
+    /// The live Desktop is the display the Mac made for this device (`WindowList.deviceDisplayLive`).
+    /// Cleared with the session.
+    @Published var hostDeviceDisplayLive: Bool?
     /// This device's path (status, interfaces, cost), for "did it leave home since the loss".
     var pathSignature = ""
     var pathMonitor: NWPathMonitor?
@@ -2875,6 +2882,8 @@ final class StreamClient: ObservableObject {
         hostProtocol = nil
         hostGestures = nil
         hostClipboard = nil
+        hostDeviceDisplay = nil
+        hostDeviceDisplayLive = nil
         remoteRoute = nil
         macInfo = nil
         macInfoSaved = false
@@ -3058,6 +3067,35 @@ final class StreamClient: ObservableObject {
         // @AppStorage does, so the switch and the panel always agree.
         let defaults = UserDefaults.standard
         return defaults.object(forKey: gesturesKey) == nil || defaults.bool(forKey: gesturesKey)
+    }
+
+    /// This device's Desktop preference (the Settings panel's This iPad group): true asks a Mac that
+    /// offers it for a display of this device's own (docs/sidecar-desktop-plan.md), false (the
+    /// default) for the Mac's screen. Carried in every viewport (`sendViewport`).
+    static let deviceDisplayKey = "Sill.deviceDisplay"
+    static var deviceDisplayOn: Bool { UserDefaults.standard.bool(forKey: deviceDisplayKey) }
+
+    /// What this device's viewports say in `deviceDisplay`: the preference, only to a Mac whose list
+    /// offers it; nil to any other Mac, which never sees the key.
+    var wantedDeviceDisplay: Bool? {
+        (hostDeviceDisplay ?? 0) >= 1 ? Self.deviceDisplayOn : nil
+    }
+
+    /// The bar's Desktop button as VoiceOver says it: which screen streams while this device's display
+    /// is the live Desktop.
+    var desktopAccessibilityLabel: String {
+        guard hostDeviceDisplayLive == true else { return "Show the full Mac desktop" }
+        let device = UIDevice.current.userInterfaceIdiom == .phone ? "iPhone" : "iPad"
+        return "Show the Mac’s display for this \(device)"
+    }
+
+    /// The Desktop preference changed in the Settings panel: the Mac hears it in a viewport, and while
+    /// the Desktop streams it is picked again so the Mac moves to the other screen. Not the person's
+    /// pick for the tour. Main thread.
+    func deviceDisplayChanged() {
+        guard connected, let v = lastViewport, v.deviceDisplay != wantedDeviceDisplay else { return }
+        sendViewport(v)
+        if active == .desktop { request(.desktop) }
     }
 
     /// A three- or four-finger gesture a surface decided (TrackpadGestures, StrokeObserver), to the
@@ -3385,6 +3423,14 @@ final class StreamClient: ObservableObject {
                                                         sharedLastSession: self.clipboardSharedLastSession)
                     self.hostClipboard = list.clipboard
                     self.clipboardListed(action)
+                }
+                if self.hostDeviceDisplayLive != list.deviceDisplayLive { self.hostDeviceDisplayLive = list.deviceDisplayLive }
+                if self.hostDeviceDisplay != list.deviceDisplay {
+                    self.hostDeviceDisplay = list.deviceDisplay
+                    // A viewport that went out before this list could not say what this device wants
+                    // its Desktop to be: it goes again, before the Desktop pick below. Only for the
+                    // display: a Mac reads no key as the Mac's screen.
+                    if Self.deviceDisplayOn, let v = self.lastViewport, v.deviceDisplay != self.wantedDeviceDisplay { self.sendViewport(v) }
                 }
                 if !self.sessionListed {
                     self.sessionListed = true
