@@ -196,6 +196,11 @@ MUTANTS = {
     "S4 copy: over the cable dropped": ("            cable ? \"Pairing with \\(mac) over the cable\\u{2026}\" : \"Pairing with \\(mac)\\u{2026}\"", "            \"Pairing with \\(mac)\\u{2026}\""),
     "S4 copy: removed says the old remote words": ("        static func removed(mac: String, device: String) -> String { \"\\(mac) removed this \\(device). Tap it to pair again.\" }", "        static func removed(mac: String, device: String) -> String { \"\\(mac) removed this \\(device). To use it again, pair it again.\" }"),
     "S4 copy: openOnMac names no menu": ("\"\\(mac) didn\\u{2019}t show a code. On the Mac, choose Pair iPhone or iPad\\u{2026} in the Sill menu, then tap \\(mac) again.\"", "\"\\(mac) didn\\u{2019}t show a code.\""),
+    # rebrowse (2026-10-15: a network listing from before)
+    "B1 rebrowse under a session": ("        !sessionLive && !moveUnderWay\n", "        !moveUnderWay\n"),
+    "B2 rebrowse during a move": ("        !sessionLive && !moveUnderWay\n", "        !sessionLive\n"),
+    "B3 never rebrowse": ("        !sessionLive && !moveUnderWay\n", "        false\n"),
+    "B4 the old rows kept 3 s": ("    static let rebrowseSettle = 1.5\n", "    static let rebrowseSettle = 3.0\n"),
 }
 caught = 0
 for name, (old, new) in MUTANTS.items():

@@ -255,6 +255,7 @@ extension StreamClient {
             DispatchQueue.main.async {
                 guard let self, signature != self.pathSignature else { return }
                 self.pathSignature = signature
+                self.rebrowseNetwork("this device's path changed")
                 if self.reconnect != nil { self.reconnectIfListed() }
             }
         }

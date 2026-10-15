@@ -1272,6 +1272,13 @@ for door in [P.HomeDoor.plain, .pairingRequired, .open] {
 }
 check("home trust: every door, removal, new key and build: pinned to the saved key exactly when a tap's dial is, never plain", homeTrustGrid)
 
+// A network listing from before (2026-10-15): the browse starts afresh only with no session and no move.
+check("rebrowse: on the connect screen, or waiting to reconnect", P.rebrowse(sessionLive: false, moveUnderWay: false))
+check("rebrowse: never under a session", !P.rebrowse(sessionLive: true, moveUnderWay: false))
+check("rebrowse: never during a move (a session whose connection died, carried on)", !P.rebrowse(sessionLive: false, moveUnderWay: true))
+check("rebrowse: never under a session that is moving", !P.rebrowse(sessionLive: true, moveUnderWay: true))
+check("rebrowse: the old rows kept 1.5 s, inside the network's first 3 s", P.rebrowseSettle == 1.5 && P.rebrowseSettle < P.networkFirst)
+
 // Pairing at home (docs/home-pairing-plan.md): sessions and pairing at home over TLS, in home.swift.
 homePolicy()
 

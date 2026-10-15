@@ -710,6 +710,27 @@ enum DiscoveryPolicy {
         remoteRetry[min(max(failures, 1), remoteRetry.count) - 1]
     }
 
+    // MARK: A network listing from before (2026-10-15)
+
+    // Away from home, the connect screen showed the saved Mac as a Wi‑Fi row, so it had no Remote
+    // row (`remoteRows`) and nothing dialed it through Tailscale; the Mac heard nothing for an
+    // hour. The network browser is started once and never again, and nothing re-reads its listing:
+    // a Mac it listed at home stays listed when the removal never reaches it, as when the phone
+    // leaves the Wi‑Fi with Sill suspended (read from the code and the Mac's log; not reproduced:
+    // with Sill open, losing the Wi‑Fi moved a session to Tailscale in 4 s). So the browse starts
+    // afresh back in the foreground, on a change of this device's path and when a session ends.
+
+    /// How long a fresh browse keeps the old rows while its browser has said nothing. A Mac on the
+    /// network comes back from mDNSResponder's cache well within it, so at home no row blinks; a
+    /// browser that finds nothing never reports, and the old rows go at this mark.
+    static let rebrowseSettle = 1.5
+
+    /// Whether to start the network browse afresh: never under a session or a move, which follow
+    /// the live browser's listing (`pathPlan`, `moveHome`) and change nothing on the connect screen.
+    static func rebrowse(sessionLive: Bool, moveUnderWay: Bool) -> Bool {
+        !sessionLive && !moveUnderWay
+    }
+
     // MARK: Pairing at home (docs/home-pairing-plan.md §7.3–7.5)
 
     /// A home door as its Bonjour TXT record's `p` says (HomeDoorTXT.Door, spelled here so that this

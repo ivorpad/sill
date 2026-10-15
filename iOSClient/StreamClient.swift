@@ -471,6 +471,9 @@ final class StreamClient: ObservableObject {
     private var networkBrowser: NWBrowser?
     private var nearbyBrowser: NWBrowser?
     private var networkResults: [NWBrowser.Result] = []
+    /// A fresh network browse whose browser has not reported yet (`rebrowseNetwork`): when it fires,
+    /// the old browse's rows go.
+    private var rebrowseSettle: DispatchWorkItem?
     private var nearbyResults: [NWBrowser.Result] = []
     /// Launch, the last connection ending, or Local Network access coming back: the network gets its
     /// first seconds from here.
@@ -826,9 +829,11 @@ final class StreamClient: ObservableObject {
         #else
         savedMacs = SavedMacs.decode(UserDefaults.standard.string(forKey: SavedMacs.defaultsKey))
         #endif
-        // Back from the background: the pings stopped while the app was suspended, which is no loss.
+        // Back from the background: the pings stopped while the app was suspended, which is no loss,
+        // and the network's rows may be from where the app was put away (DiscoveryPolicy.rebrowse).
         NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resetLiveness()
+            self?.rebrowseNetwork("back in the foreground")
         }
     }
 
@@ -841,10 +846,19 @@ final class StreamClient: ObservableObject {
         // the kernel bring AWDL up, which takes the radio off its Wi-Fi channel up to ~100 ms twice
         // a second (CLAUDE.md, trackpad stutter), and on a shared network AWDL carries nothing of
         // Sill's. Direct Wireless Connection is the Mac's opt-in for that route (the nearby browser).
+        let browser = makeNetworkBrowser()
+        browser.start(queue: queue)
+        networkBrowser = browser
+        discoveryChanged()
+    }
+
+    private func makeNetworkBrowser() -> NWBrowser {
         let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil), using: NWParameters())
         browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
             DispatchQueue.main.async {
                 guard let self, let browser, self.networkBrowser === browser else { return }
+                self.rebrowseSettle?.cancel()
+                self.rebrowseSettle = nil
                 self.networkResults = Array(results)
                 self.discoveryChanged()
             }
@@ -855,9 +869,32 @@ final class StreamClient: ObservableObject {
                 self.networkBrowserChanged(state)
             }
         }
+        return browser
+    }
+
+    /// Starts the network browse afresh, when DiscoveryPolicy.rebrowse says: back in the foreground,
+    /// this device's path changed, or a session ended. The old rows stay until the new browser
+    /// reports or `rebrowseSettle` passes, when they go: a browser that finds nothing never reports.
+    /// Main thread.
+    func rebrowseNetwork(_ why: String) {
+        guard let old = networkBrowser,
+              DiscoveryPolicy.rebrowse(sessionLive: session != nil || connected, moveUnderWay: moving != nil) else { return }
+        old.cancel()
+        let browser = makeNetworkBrowser()
         browser.start(queue: queue)
         networkBrowser = browser
-        discoveryChanged()
+        #if DEBUG
+        print("discovery: browsing the network afresh (\(why))")
+        #endif
+        rebrowseSettle?.cancel()
+        let settle = DispatchWorkItem { [weak self] in
+            guard let self, self.networkBrowser === browser, self.rebrowseSettle != nil else { return }
+            self.rebrowseSettle = nil
+            self.networkResults = []
+            self.discoveryChanged()
+        }
+        rebrowseSettle = settle
+        DispatchQueue.main.asyncAfter(deadline: .now() + DiscoveryPolicy.rebrowseSettle, execute: settle)
     }
 
     /// The network browser's state. Local Network access denied shows as waiting with PolicyDenied
@@ -2831,6 +2868,7 @@ final class StreamClient: ObservableObject {
         if connected { print("session: over; back to the connect screen") }
         #endif
         sessionEnded(error: error, end: end)
+        rebrowseNetwork("the session ended")
     }
 
     /// The browse-results handlers reconnect when the Mac's Bonjour record comes back. If the record
