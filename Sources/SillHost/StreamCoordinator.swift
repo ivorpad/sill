@@ -204,6 +204,9 @@ package final class StreamCoordinator {
     private var deselectWhenSettled = false
     /// The Mac's cursor shape, streamed to the clients that draw the pointer themselves.
     let cursorShapes = CursorShapeWatcher()
+    /// The shared clipboard (kind 29): this Mac's copies out to the devices, theirs in. Runs while a
+    /// device is connected.
+    let clipboard = ClipboardSync()
     private let macName = Host.current().localizedName ?? "Mac"
     /// In every window list (`WindowList.launchID`): a device moving its session from AWDL to the
     /// network checks that the new connection reaches this same running host, since the Bonjour
@@ -380,6 +383,7 @@ package final class StreamCoordinator {
                 self.routes[id] = nil
                 self.lastPairingWanted[id] = nil
                 self.connections[id] = nil
+                self.clipboard.running = !self.connections.isEmpty
                 self.lastPublished[id] = nil
                 self.linkReports[id] = nil
                 if self.flipWait == id { self.flipWait = nil }
@@ -419,6 +423,10 @@ package final class StreamCoordinator {
         cursorShapes.onChange = { [weak self] blob in
             self?.server.broadcast(StreamMessage(kind: .cursorShape, timestamp: Date().timeIntervalSince1970,
                                                  isKeyframe: false, payload: blob))
+        }
+        clipboard.onCopy = { [weak self] item in
+            self?.server.broadcast(StreamMessage(kind: .clipboard, timestamp: Date().timeIntervalSince1970,
+                                                 isKeyframe: false, payload: Wire.encode(item)))
         }
         catalog.onInstalledAppsReady = { [weak self] apps in
             guard let self else { return }
@@ -926,6 +934,11 @@ package final class StreamCoordinator {
             recent.append(now)
             gestureArrivals[id] = recent
             queueGesture(gesture, from: deviceName(connection))
+        case .clipboard:
+            // A copy made on a device, for this Mac's clipboard. The reader already capped it at
+            // `maxClientPayload`; `received` drops anything over the item's own cap.
+            guard let item = Wire.decode(ClipboardItem.self, from: message.payload) else { return }
+            clipboard.received(item, from: deviceName(connection))
         case .viewport:
             guard let v = Wire.decode(Viewport.self, from: message.payload) else { return }
             viewport = v
@@ -2236,7 +2249,8 @@ package final class StreamCoordinator {
         StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
-                                                      gestures: TrackpadGesture.generation)))
+                                                      gestures: TrackpadGesture.generation,
+                                                      clipboard: ClipboardItem.generation)))
     }
 
     private func broadcastList() { server.broadcast(listMessage()) }
@@ -2254,6 +2268,7 @@ package final class StreamCoordinator {
         server.send(settingsMessage(state), to: connection)
         lastPublished[id] = state
         connections[id] = connection
+        clipboard.running = true
         // Who this Mac is and how to reach it from afar (kind 18, signed), on both doors, only from
         // a host with an identity. An older device skips it too.
         if let info = remote?.macInfoMessage() { server.send(info, to: connection) }

@@ -163,7 +163,12 @@ check(!json(list).contains("gestures"), "a list without them leaves the key out:
 check(decodedOld != nil && decodedOld?.gestures == nil, "an older host's list decodes, gestures nil")
 check(Wire.decode(WindowList.self, from: Wire.encode(takes))?.gestures == 1, "gestures round-trips")
 check(StreamMessageKind.gesture.rawValue == 28 && StreamMessageKind(rawValue: 28) == .gesture, "kind 28 is gesture")
-check(StreamMessageKind(rawValue: 27) == .fetchMenu && StreamMessageKind(rawValue: 29) == nil, "27 is the menus' fetch, 29 not this build's")
+check(StreamMessageKind(rawValue: 27) == .fetchMenu && StreamMessageKind(rawValue: 29) == .clipboard && StreamMessageKind(rawValue: 30) == nil,
+      "27 is the menus' fetch, 29 the clipboard, 30 not this build's")
+// The clipboard's key: left out by a host without it, 1 from one that takes kind 29, nil from an older list.
+let clip = WindowList(macName: "Mac mini", windows: [], active: .desktop, launchID: "L", clipboard: ClipboardItem.generation)
+check(json(clip).contains(#""clipboard":1"#) && !json(takes).contains("clipboard"), "clipboard 1 only when said: \(json(clip))")
+check(decodedOld != nil && decodedOld?.clipboard == nil, "an older host's list decodes, clipboard nil")
 let gestureMessage = StreamMessage(kind: .gesture, timestamp: 1, isKeyframe: false, payload: Wire.encode(gesture)).serialized()
 check(StreamMessage.parseHeader(gestureMessage)?.kind == .gesture, "the gesture's header parses")
 check(gestureMessage.count == StreamMessage.headerLength + Wire.encode(gesture).count, "one header, then the JSON")

@@ -732,6 +732,12 @@ final class StreamClient: ObservableObject {
     /// six, nil from a Mac before 2026-09-27, which is sent none (`sendGesture`). Cleared with the
     /// session.
     @Published var hostGestures: Int?
+    /// Whether this session's Mac takes the shared clipboard (`WindowList.clipboard`): 1, or nil
+    /// from a Mac before it, which is sent none. Cleared with the session.
+    @Published var hostClipboard: Int?
+    /// This device's clipboard as last looked at (StreamClient+Clipboard.swift). Kept across
+    /// sessions: a copy made while disconnected goes at the next one.
+    var clipboardEcho = ClipboardEcho()
     /// This device's path (status, interfaces, cost), for "did it leave home since the loss".
     var pathSignature = ""
     var pathMonitor: NWPathMonitor?
@@ -830,6 +836,7 @@ final class StreamClient: ObservableObject {
         NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resetLiveness()
         }
+        startClipboardObservers()
     }
 
     /// Starts the network browser (once). The nearby one follows the policy (`updateDiscovery`).
@@ -2863,6 +2870,7 @@ final class StreamClient: ObservableObject {
         hostVersion = nil
         hostProtocol = nil
         hostGestures = nil
+        hostClipboard = nil
         remoteRoute = nil
         macInfo = nil
         macInfoSaved = false
@@ -3367,6 +3375,10 @@ final class StreamClient: ObservableObject {
                 if self.hostVersion != list.hostVersion { self.hostVersion = list.hostVersion }
                 if self.hostProtocol != list.protocol { self.hostProtocol = list.protocol }
                 if self.hostGestures != list.gestures { self.hostGestures = list.gestures }
+                if self.hostClipboard != list.clipboard {
+                    self.hostClipboard = list.clipboard
+                    self.sendClipboardIfNew()       // a copy made here while there was no session
+                }
                 if !self.sessionListed {
                     self.sessionListed = true
                     #if DEBUG
@@ -3454,6 +3466,8 @@ final class StreamClient: ObservableObject {
             DispatchQueue.main.async { self.cursorShape = CursorShape(image: image, hotspot: hotspot, size: size) }
         case .macPointer:
             receivePointer(data)
+        case .clipboard:
+            receiveClipboard(data)
         case .hostSettings:
             guard let state = Wire.decode(HostSettingsState.self, from: data) else { return }
             let from = connection
