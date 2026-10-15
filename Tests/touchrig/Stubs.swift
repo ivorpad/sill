@@ -13,9 +13,12 @@ enum Palette {
 
 #if ZOOM
 /// Where the sources have pinch to zoom: the overlay holds the display view weakly for its `zoom`.
-/// The rig never hands it one, so every touch maps through the fitted picture, as before.
+/// The rig hands it one only in replay mode (run.sh --replay), which logs every change of `zoom`;
+/// otherwise every touch maps through the fitted picture, as before. It never follows the Mac's
+/// pointer (`setPointer`): there is no Mac to report it.
 final class HEVCDisplayView {
-    var zoom = PictureZoom()
+    var onZoom: ((PictureZoom) -> Void)?
+    var zoom = PictureZoom() { didSet { if zoom != oldValue { onZoom?(zoom) } } }
     var followPaused = false
     static func videoRect(in bounds: CGRect, videoSize: CGSize, zoom: PictureZoom = PictureZoom()) -> CGRect {
         zoom.rect(fitted: fittedRect(in: bounds, videoSize: videoSize), in: bounds)

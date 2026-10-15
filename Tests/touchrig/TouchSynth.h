@@ -14,6 +14,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)endIndices:(NSIndexSet *)indices;
 /// Every active touch cancelled. One event.
 - (void)cancelAll;
+/// A recorded event replayed (run.sh --replay): each touch by its trace id, with its phase
+/// (UITouchPhase raw value), window point and tap count; active touches it does not name are
+/// stationary. A touch first named in a phase other than began begins there. One event.
+- (void)applyIDs:(NSArray<NSNumber *> *)ids phases:(NSArray<NSNumber *> *)phases
+          points:(NSArray<NSValue *> *)points taps:(NSArray<NSNumber *> *)taps
+    NS_SWIFT_NAME(apply(ids:phases:points:taps:));
 @property (nonatomic, readonly) NSUInteger activeCount;
 /// The real routing path instead: a digitizer hand event handed to UIKit's own HID entry point, so
 /// UIKit makes the touches, hit-tests every window and runs every recognizer (the editing overlay's

@@ -186,4 +186,5 @@ def main():
     print(f"{checks} checks, {fails} failed")
     sys.exit(1 if fails else 0)
 
-main()
+if __name__ == "__main__":   # compare_replay.py imports normal()
+    main()

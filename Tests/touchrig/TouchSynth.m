@@ -73,6 +73,7 @@ static SetSenderFn setSender;
     UIWindow *_window;
     NSMutableArray<RigTouch *> *_active;
     uint32_t _nextIndex;
+    NSMutableDictionary<NSNumber *, RigTouch *> *_byID;   // replay: trace id → touch
 }
 
 + (void)load {
@@ -112,6 +113,7 @@ static SetSenderFn setSender;
     if ((self = [super init])) {
         _window = window;
         _active = [NSMutableArray array];
+        _byID = [NSMutableDictionary dictionary];
         _nextIndex = 1;
     }
     return self;
@@ -168,34 +170,69 @@ static SetSenderFn setSender;
     CFRelease(hid);
 }
 
+- (RigTouch *)newTouchAt:(CGPoint)pt taps:(NSUInteger)taps {
+    UITouch *t = [UITouch new];
+    [t setWindow:_window];
+    [t setTapCount:taps];
+    [t _setLocationInWindow:pt resetPrevious:YES];
+    UIView *hit = [_window hitTest:pt withEvent:nil];
+    [t setView:hit];
+    [t setPhase:UITouchPhaseBegan];
+    // Only the first finger of a gesture is the first touch for the view (a real hand's later
+    // fingers are not); TOUCHRIG_FIRSTFLAG=all flags every touch, as KIF does for one-finger taps.
+    BOOL flagAll = [[[NSProcessInfo processInfo].environment objectForKey:@"TOUCHRIG_FIRSTFLAG"] isEqualToString:@"all"];
+    [t _setIsFirstTouchForView:(flagAll || _active.count == 0)];
+    if ([t respondsToSelector:@selector(setIsTap:)]) [t setIsTap:NO];
+    if ([t respondsToSelector:@selector(setGestureView:)]) [t setGestureView:hit];
+    RigTouch *p = [RigTouch new];
+    p.touch = t; p.point = pt; p.pathIndex = _nextIndex++;
+    if ([t respondsToSelector:@selector(_setPathIndex:)]) [t _setPathIndex:(unsigned char)p.pathIndex];
+    if ([t respondsToSelector:@selector(_setPathIdentity:)]) [t _setPathIdentity:2];
+    IOHIDEventRef own = [self hidEventFor:@[p]];
+    [t _setHidEvent:own];
+    CFRelease(own);
+    [_active addObject:p];
+    return p;
+}
+
 - (void)beginAt:(NSArray<NSValue *> *)points {
     if (_active.count == 0) _nextIndex = 1;   // a new gesture: path indexes from 1, as a real hand's
     for (RigTouch *p in _active) [p.touch setPhase:UITouchPhaseStationary];
-    for (NSValue *v in points) {
-        CGPoint pt = v.CGPointValue;
-        UITouch *t = [UITouch new];
-        [t setWindow:_window];
-        [t setTapCount:1];
-        [t _setLocationInWindow:pt resetPrevious:YES];
-        UIView *hit = [_window hitTest:pt withEvent:nil];
-        [t setView:hit];
-        [t setPhase:UITouchPhaseBegan];
-        // Only the first finger of a gesture is the first touch for the view (a real hand's later
-        // fingers are not); TOUCHRIG_FIRSTFLAG=all flags every touch, as KIF does for one-finger taps.
-        BOOL flagAll = [[[NSProcessInfo processInfo].environment objectForKey:@"TOUCHRIG_FIRSTFLAG"] isEqualToString:@"all"];
-        [t _setIsFirstTouchForView:(flagAll || _active.count == 0)];
-        if ([t respondsToSelector:@selector(setIsTap:)]) [t setIsTap:NO];
-        if ([t respondsToSelector:@selector(setGestureView:)]) [t setGestureView:hit];
-        RigTouch *p = [RigTouch new];
-        p.touch = t; p.point = pt; p.pathIndex = _nextIndex++;
-        if ([t respondsToSelector:@selector(_setPathIndex:)]) [t _setPathIndex:(unsigned char)p.pathIndex];
-        if ([t respondsToSelector:@selector(_setPathIdentity:)]) [t _setPathIdentity:2];
-        IOHIDEventRef own = [self hidEventFor:@[p]];
-        [t _setHidEvent:own];
-        CFRelease(own);
-        [_active addObject:p];
+    for (NSValue *v in points) [self newTouchAt:v.CGPointValue taps:1];
+    [self dispatch];
+}
+
+- (void)applyIDs:(NSArray<NSNumber *> *)ids phases:(NSArray<NSNumber *> *)phases
+          points:(NSArray<NSValue *> *)points taps:(NSArray<NSNumber *> *)taps {
+    if (_active.count == 0) _nextIndex = 1;
+    for (RigTouch *p in _active) [p.touch setPhase:UITouchPhaseStationary];
+    NSMutableArray<RigTouch *> *gone = [NSMutableArray array];
+    for (NSUInteger i = 0; i < ids.count; i++) {
+        UITouchPhase phase = (UITouchPhase)phases[i].integerValue;
+        CGPoint pt = points[i].CGPointValue;
+        NSUInteger tapCount = taps[i].unsignedIntegerValue;
+        RigTouch *p = _byID[ids[i]];
+        if (!p) {
+            if (phase == UITouchPhaseEnded || phase == UITouchPhaseCancelled) continue;   // never began here
+            p = [self newTouchAt:pt taps:tapCount];
+            _byID[ids[i]] = p;
+            continue;
+        }
+        if (!CGPointEqualToPoint(pt, p.point)) {
+            p.point = pt;
+            [p.touch _setLocationInWindow:pt resetPrevious:NO];
+            if (phase == UITouchPhaseStationary) phase = UITouchPhaseMoved;
+        }
+        if (phase == UITouchPhaseBegan) phase = UITouchPhaseStationary;   // already down
+        [p.touch setPhase:phase];
+        [p.touch setTapCount:tapCount];
+        if (phase == UITouchPhaseEnded || phase == UITouchPhaseCancelled) {
+            [gone addObject:p];
+            [_byID removeObjectForKey:ids[i]];
+        }
     }
     [self dispatch];
+    [_active removeObjectsInArray:gone];
 }
 
 - (void)moveTo:(NSArray<NSValue *> *)points {
@@ -225,6 +262,7 @@ static SetSenderFn setSender;
     for (RigTouch *p in _active) [p.touch setPhase:UITouchPhaseCancelled];
     [self dispatch];
     [_active removeAllObjects];
+    [_byID removeAllObjects];
 }
 
 @end

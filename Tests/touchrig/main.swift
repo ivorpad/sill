@@ -6,6 +6,9 @@
 //
 // Environment (simctl launch's SIMCTL_CHILD_ prefix): RIG_SWITCH=off makes `sendGesture` answer false,
 // as StreamClient does with the device's switch off; RIG_TRACE=1 also logs recognizer transitions.
+// RIG_REPLAY=FILE (run.sh --replay) instead replays a TouchTrace recording, prepared by run.sh as
+// FILE in the app bundle, into the overlay alone (`Replayer`); RIG_VIDEO=WxH sets the video size it
+// maps through (default: the overlay's own shape at 3x, a picture that fills it).
 import UIKit
 
 // MARK: - Log
@@ -323,6 +326,93 @@ final class Runner {
     }
 }
 
+// MARK: - Replay (run.sh --replay)
+
+/// A TouchTrace recording as run.sh prepares it: per gesture, its events (each one UIEvent the device
+/// delivered, its coalesced samples left out), `dt` seconds after the gesture's first, each touch as
+/// [trace id, UITouchPhase raw value, x, y, tap count] in the trace's view points.
+struct ReplayTrace: Decodable {
+    struct Event: Decodable { let dt: Double; let t: [[Double]] }
+    struct Gesture: Decodable { let g: String; let text: String; let events: [Event] }
+    let viewW: Double
+    let viewH: Double
+    let gestures: [Gesture]
+}
+
+/// Each gesture's events at their recorded times, scaled from the trace's view to `view`, through
+/// TouchSynth (one UIEvent each, identities and phases kept), then 2.5 s to settle (momentum,
+/// recognizers resetting), then the next gesture. The zoom carries over, as on the device, unless
+/// RIG_REPLAY_FRESH=1 (run.sh --fresh) puts each gesture back on the fitted picture first.
+final class Replayer {
+    let synth: TouchSynth
+    let view: UIView
+    let trace: ReplayTrace
+    let zoomText: () -> String
+    var reset: (() -> Void)?
+    var index = 0
+    var done: () -> Void = {}
+
+    init(window: UIWindow, view: UIView, trace: ReplayTrace, zoomText: @escaping () -> String) {
+        synth = TouchSynth(window: window)
+        self.view = view
+        self.trace = trace
+        self.zoomText = zoomText
+    }
+
+    func start(done: @escaping () -> Void) {
+        self.done = done
+        next()
+    }
+
+    private func next() {
+        guard index < trace.gestures.count else { done(); return }
+        let g = trace.gestures[index]
+        index += 1
+        reset?()
+        RigLog.lines = []
+        let lead = 20.0 / 60
+        let base = DispatchTime.now() + lead
+        RigLog.t0 = CACurrentMediaTime() + lead
+        RigLog.log("zoom at start \(zoomText())")
+        for e in g.events {
+            DispatchQueue.main.asyncAfter(deadline: base + e.dt) { [self] in apply(e) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: base + (g.events.last?.dt ?? 0) + 150.0 / 60) { [self] in
+            if synth.activeCount > 0 { synth.cancelAll(); RigLog.log("[touch] cancel the rest") }
+            RigLog.flush("\(g.g) \(g.text)")
+            next()
+        }
+    }
+
+    private func apply(_ e: ReplayTrace.Event) {
+        let sx = view.bounds.width / trace.viewW, sy = view.bounds.height / trace.viewH
+        let names = ["began", "moved", "stationary", "ended", "cancelled"]
+        var ids: [NSNumber] = [], phases: [NSNumber] = [], points: [NSValue] = [], taps: [NSNumber] = []
+        var shown: [String] = []
+        for t in e.t {
+            let p = CGPoint(x: t[2] * sx, y: t[3] * sy)
+            ids.append(NSNumber(value: Int(t[0]))); phases.append(NSNumber(value: Int(t[1])))
+            points.append(NSValue(cgPoint: view.convert(p, to: view.window)))
+            taps.append(NSNumber(value: Int(t[4])))
+            if Int(t[1]) != 2 { shown.append("\(Int(t[0])) \(names[Int(t[1])]) (\(String(format: "%.1f,%.1f", p.x, p.y)))") }
+        }
+        synth.apply(ids: ids, phases: phases, points: points, taps: taps)
+        // Moves are many; only begins, ends and cancels are logged.
+        if shown.contains(where: { !$0.contains(" moved ") }) {
+            RigLog.log("[touch] \(shown.joined(separator: " ")) → \(synth.activeCount) down")
+        }
+    }
+}
+
+func zoomDescription(_ root: Root) -> String {
+    #if ZOOM
+    let z = root.display.zoom
+    return String(format: "scale=%.3f centre=(%.3f,%.3f)", z.scale, z.center.x, z.center.y)
+    #else
+    return "none (no PictureZoom at this revision)"
+    #endif
+}
+
 // MARK: - The app
 
 @objc(RigAppDelegate)
@@ -338,8 +428,20 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 final class Root: UIViewController {
     let trackpad = TrackpadSurface(frame: .zero)
     let overlay = InputOverlayView(frame: .zero)
+    /// RIG_REPLAY: the overlay alone, over the whole window, as the trace's canvas was.
+    let replay = ProcessInfo.processInfo.environment["RIG_REPLAY"].flatMap { $0.isEmpty ? nil : $0 }
+    #if ZOOM
+    /// The picture's zoom, which the overlay changes; held here, as the overlay holds it weakly.
+    let display = HEVCDisplayView()
+    #endif
     override func viewDidLoad() {
         super.viewDidLoad()
+        #if ZOOM
+        if replay != nil {
+            overlay.display = display
+            display.onZoom = { z in RigLog.log(String(format: "zoom scale=%.3f centre=(%.3f,%.3f)", z.scale, z.center.x, z.center.y)) }
+        }
+        #endif
         view.backgroundColor = .black
         trackpad.backgroundColor = UIColor(white: 0.12, alpha: 1)
         overlay.backgroundColor = UIColor(white: 0.2, alpha: 1)
@@ -356,6 +458,12 @@ final class Root: UIViewController {
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        if replay != nil {
+            trackpad.isHidden = true
+            trackpad.frame = .zero
+            overlay.frame = view.bounds
+            return
+        }
         let b = view.bounds.inset(by: view.safeAreaInsets).insetBy(dx: 16, dy: 16)
         let h = (b.height - 16) / 2
         trackpad.frame = CGRect(x: b.minX, y: b.minY, width: b.width, height: h)
@@ -390,6 +498,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             for g in root.trackpad.gestureRecognizers ?? [] { Tracer.shared.trace(g, as: "T.\(type(of: g))") }
             for g in root.overlay.gestureRecognizers ?? [] { Tracer.shared.trace(g, as: "O.\(type(of: g))") }
         }
+        if let file = root.replay { replay(file, root, w); return }
         let runner = Runner(window: w)
         self.runner = runner
         let tc = CGPoint(x: root.trackpad.bounds.midX, y: root.trackpad.bounds.midY + 60)
@@ -397,6 +506,31 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         for (title, steps) in scenarios(tc) { runner.add("TRACKPAD \(title)", root.trackpad, steps) }
         for (title, steps) in scenarios(oc) { runner.add("OVERLAY \(title)", root.overlay, steps) }
         runner.start { print("RIG done"); exit(0) }
+    }
+
+    var replayer: Replayer?
+
+    func replay(_ file: String, _ root: Root, _ w: UIWindow) {
+        guard let url = Bundle.main.url(forResource: file, withExtension: nil),
+              let data = try? Data(contentsOf: url),
+              let trace = try? JSONDecoder().decode(ReplayTrace.self, from: data) else {
+            print("RIG replay: cannot read \(file)"); exit(1)
+        }
+        let o = root.overlay.bounds.size
+        if let v = ProcessInfo.processInfo.environment["RIG_VIDEO"]?.split(separator: "x").compactMap({ Double($0) }), v.count == 2 {
+            root.overlay.videoSize = CGSize(width: v[0], height: v[1])
+        } else {
+            root.overlay.videoSize = CGSize(width: o.width * 3, height: o.height * 3)
+        }
+        print("RIG replay \(file): trace view \(trace.viewW)x\(trace.viewH), overlay \(root.overlay.frame), scale "
+              + String(format: "%.4f,%.4f", o.width / trace.viewW, o.height / trace.viewH)
+              + ", video \(root.overlay.videoSize), \(trace.gestures.count) gestures")
+        let r = Replayer(window: w, view: root.overlay, trace: trace, zoomText: { zoomDescription(root) })
+        #if ZOOM
+        if ProcessInfo.processInfo.environment["RIG_REPLAY_FRESH"] == "1" { r.reset = { root.display.zoom = PictureZoom() } }
+        #endif
+        replayer = r
+        r.start { print("RIG done"); exit(0) }
     }
 }
 
