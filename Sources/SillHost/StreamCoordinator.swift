@@ -1407,7 +1407,11 @@ package final class StreamCoordinator {
                 } else {
                     filter = SCContentFilter(display: d, excludingWindows: [])
                 }
-                width = evenPixels(CGFloat(d.width) * captureScale); height = evenPixels(CGFloat(d.height) * captureScale)
+                // Never past the display's own pixels: Retina on a 1× display (a 2560×1440 monitor)
+                // made 5120×2880 at 120 fps, four times the pixels with no more detail and nearly
+                // three times what the hardware encoder takes (the iPad got 13 fps).
+                let desktopScale = min(captureScale, CGFloat(filter?.pointPixelScale ?? Float(captureScale)))
+                width = evenPixels(CGFloat(d.width) * desktopScale); height = evenPixels(CGFloat(d.height) * desktopScale)
                 describe = "the whole desktop\(useSoftwareEncoder ? " (software encoder)" : "")"
                 title = "Whole Desktop"; kind = .desktop
             }
