@@ -109,6 +109,15 @@ final class InputOverlayView: UIView, UIKeyInput {
         pinch.allowedTouchTypes = directOnly
         addGestureRecognizer(pinch)
 
+        // Two fingers double-tapped: zoom in there, or back to the fitted picture. Two fingers, so
+        // the one-finger tap above never waits for a second tap; nothing else takes a still
+        // two-finger tap (the tap wants one finger, the pan and pinch movement, strokes three).
+        let zoomTap = UITapGestureRecognizer(target: self, action: #selector(handleZoomTap))
+        zoomTap.numberOfTouchesRequired = 2
+        zoomTap.numberOfTapsRequired = 2
+        zoomTap.allowedTouchTypes = directOnly
+        addGestureRecognizer(zoomTap)
+
         // Pencil hover on the iPads that support it, and the trackpad/mouse pointer everywhere.
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover))
         addGestureRecognizer(hover)
@@ -236,6 +245,7 @@ final class InputOverlayView: UIView, UIKeyInput {
                   let a = fraction(gesture.location(in: self)) else { zoomAnchor = nil; return }
             momentum.stop()
             zoomAnchor = (a, zoom.scale)
+            display?.followPaused = true
         case .changed:
             guard let anchor = zoomAnchor, !strokes.silent else { return }
             // One finger lifted mid-pinch: hold still rather than jump to the remaining finger.
@@ -245,6 +255,7 @@ final class InputOverlayView: UIView, UIKeyInput {
         default:
             guard zoomAnchor != nil else { return }
             zoomAnchor = nil
+            display?.followPaused = false
             zoom = zoom.settled
         }
     }
@@ -258,6 +269,7 @@ final class InputOverlayView: UIView, UIKeyInput {
             guard gesture.numberOfTouches == 1 else { return false }
             momentum.stop()
             pointerPan = true
+            display?.followPaused = true
             fallthrough
         case .changed:
             guard pointerPan else { return false }
@@ -266,7 +278,26 @@ final class InputOverlayView: UIView, UIKeyInput {
         default:
             guard pointerPan else { return false }
             pointerPan = false
+            display?.followPaused = false
             return true
+        }
+    }
+
+    /// A two-finger double tap: back to the fitted picture when zoomed, else `PictureZoom.tapScale`
+    /// about the point between the fingers. Animated, as the picture jumps otherwise.
+    @objc private func handleZoomTap(_ gesture: UITapGestureRecognizer) {
+        guard !strokes.silent, zoomAnchor == nil else { return }
+        let point = gesture.location(in: self)
+        let next: PictureZoom
+        if zoom.isZoomed {
+            next = PictureZoom()
+        } else {
+            guard let a = fraction(point) else { return }
+            next = zoom.moved(to: PictureZoom.tapScale, anchor: a, at: point, fitted: fittedRect, in: bounds)
+        }
+        momentum.stop()
+        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.zoom = next
         }
     }
 
@@ -280,6 +311,7 @@ final class InputOverlayView: UIView, UIKeyInput {
                   let a = fraction(gesture.location(in: self)) else { return false }
             momentum.stop()
             zoomAnchor = (a, zoom.scale)
+            display?.followPaused = true
             return true
         case .changed:
             guard let anchor = zoomAnchor else { return false }
@@ -290,6 +322,7 @@ final class InputOverlayView: UIView, UIKeyInput {
         default:
             guard zoomAnchor != nil else { return false }
             zoomAnchor = nil
+            display?.followPaused = false
             return true
         }
     }

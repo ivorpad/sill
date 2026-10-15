@@ -27,6 +27,12 @@ final class HEVCDisplayView: UIView {
             layoutIfNeeded()   // the touch that zoomed and the next frame should see the same rect
         }
     }
+    /// While a finger on the picture moves the pointer, pinches or moves the picture, the zoom does
+    /// not follow the pointer: moving the picture under the finger would move what the finger points
+    /// at, and the pointer with it. Set by `InputOverlayView`. Main thread.
+    var followPaused = false
+    /// How close to the view's edge the followed pointer may come before the picture moves.
+    private static let followMargin: CGFloat = 40
 
     private var formatDescription: CMVideoFormatDescription?
     private var waitingForKeyframe = true
@@ -155,6 +161,12 @@ final class HEVCDisplayView: UIView {
     /// Main thread.
     func setPointer(_ p: CGPoint?) {
         pointer = p
+        // Zoomed in, the picture keeps the pointer in view (the portrait trackpad, the Mac's own
+        // mouse), unless a finger on the picture is what moves it.
+        if let p, zoom.isZoomed, !followPaused {
+            let fitted = Self.fittedRect(in: bounds, videoSize: pointerVideoSize)
+            zoom = zoom.following(p, margin: Self.followMargin, fitted: fitted, in: bounds)
+        }
         placeCursor()
     }
 

@@ -129,5 +129,35 @@ for (name, bounds, video) in cases {
 }
 check(roundTrips == 2_000, "every random step held (\(roundTrips) of 2000)")
 
+// MARK: Following the pointer
+
+for (name, bounds, video) in cases {
+    let f = fitted(video, in: bounds)
+    let margin: CGFloat = 40
+    let inner = bounds.insetBy(dx: min(margin, bounds.width / 4), dy: min(margin, bounds.height / 4))
+    // Not zoomed: nothing to follow.
+    check(Z().following(pt(0.99, 0.01), margin: margin, fitted: f, in: bounds) == Z(), "\(name): unzoomed stays fitted")
+    let z = Z().moved(to: 3, anchor: pt(0.5, 0.5), at: pt(f.midX, f.midY), fitted: f, in: bounds)
+    // A point already well inside the view: unchanged.
+    check(z.following(pt(0.5, 0.5), margin: margin, fitted: f, in: bounds) == z, "\(name): a point inside moves nothing")
+    // Points across the frame, corners included: afterwards inside the inset view, or the picture
+    // is at that edge already (a frame corner can sit at most at the view's corner), and the scale
+    // never changes.
+    for p in [pt(0, 0), pt(1, 1), pt(0.05, 0.9), pt(0.97, 0.2), pt(0.5, 0.02), pt(0.3, 0.99)] {
+        let n = z.following(p, margin: margin, fitted: f, in: bounds)
+        let r = n.rect(fitted: f, in: bounds)
+        let at = at(p, r)
+        let insideX = at.x >= inner.minX - 0.001 && at.x <= inner.maxX + 0.001
+        let insideY = at.y >= inner.minY - 0.001 && at.y <= inner.maxY + 0.001
+        let edgeX = near(r.minX, bounds.minX) || near(r.maxX, bounds.maxX) || r.width <= bounds.width
+        let edgeY = near(r.minY, bounds.minY) || near(r.maxY, bounds.maxY) || r.height <= bounds.height
+        check(near(n.scale, z.scale), "\(name): following keeps the scale")
+        check((insideX || edgeX) && (insideY || edgeY), "\(name): \(p) followed into view, or the picture is at that edge (\(at))")
+        check(placedWell(r, bounds), "\(name): following leaves no gap")
+        // Following again from there changes nothing: it settles.
+        check(n.following(p, margin: margin, fitted: f, in: bounds) == n, "\(name): \(p) followed twice is followed once")
+    }
+}
+
 print(failures == 0 ? "ok: \(checks) checks" : "FAIL: \(failures) of \(checks) checks")
 exit(failures == 0 ? 0 : 1)

@@ -16,6 +16,7 @@ enum Palette {
 /// The rig never hands it one, so every touch maps through the fitted picture, as before.
 final class HEVCDisplayView {
     var zoom = PictureZoom()
+    var followPaused = false
     static func videoRect(in bounds: CGRect, videoSize: CGSize, zoom: PictureZoom = PictureZoom()) -> CGRect {
         zoom.rect(fitted: fittedRect(in: bounds, videoSize: videoSize), in: bounds)
     }

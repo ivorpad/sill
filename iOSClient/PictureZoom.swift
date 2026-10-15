@@ -19,6 +19,8 @@ struct PictureZoom: Equatable {
     /// A pinch let go below this goes back to the fitted picture, so getting all the way out never
     /// needs a precise pinch.
     static let snapBelow: CGFloat = 1.1
+    /// A two-finger double tap's zoom: 2.5 times, enough to read a Mac window's text on a phone.
+    static let tapScale: CGFloat = 2.5
 
     private(set) var scale: CGFloat = 1
     /// The frame point at the fitted rect's middle, each coordinate 0...1.
@@ -53,6 +55,19 @@ struct PictureZoom: Equatable {
         // Read back from the placed rect, so `rect(fitted:in:)` gives that same rect.
         zoom.center = CGPoint(x: (fitted.midX - x) / width, y: (fitted.midY - y) / height)
         return zoom
+    }
+
+    /// The zoom moved just enough that the frame point `point` (fractions) is drawn at least
+    /// `margin` inside the view, as far as the edges allow: the picture follows the Mac's pointer,
+    /// as macOS's own Zoom does. Unzoomed, or with the point already inside, it is unchanged.
+    func following(_ point: CGPoint, margin: CGFloat, fitted: CGRect, in bounds: CGRect) -> PictureZoom {
+        guard isZoomed, fitted.width > 0, fitted.height > 0 else { return self }
+        let r = rect(fitted: fitted, in: bounds)
+        let at = CGPoint(x: r.minX + point.x * r.width, y: r.minY + point.y * r.height)
+        let inner = bounds.insetBy(dx: min(margin, bounds.width / 4), dy: min(margin, bounds.height / 4))
+        let target = CGPoint(x: min(max(at.x, inner.minX), inner.maxX), y: min(max(at.y, inner.minY), inner.maxY))
+        guard target != at else { return self }
+        return moved(to: scale, anchor: point, at: target, fitted: fitted, in: bounds)
     }
 
     /// The zoom a pinch leaves when it ends: the fitted picture below `snapBelow`, else as it is.
