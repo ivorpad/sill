@@ -1299,5 +1299,26 @@ do {
     print("device: \(sessions) sessions; checks reported in \(reported[.modifierUps] ?? 0) of 500 on a Mac ignoring modifier keys' ups and \(reported[.keyUps] ?? 0) of 500 ignoring other keys' ups")
 }
 
+// Typed text's keycodes (KeyStrokes.textKey): the US key each printable ASCII character sits on,
+// so an app that reads keycodes sees it (Ghostty saw every typed character as A, keycode 0).
+do {
+    let cases: [(Character, UInt16, Bool)] = [
+        ("a", 0, false), ("v", 9, false), ("V", 9, true), ("z", 6, false), ("1", 18, false),
+        ("!", 18, true), ("0", 29, false), (")", 29, true), (" ", 49, false), ("-", 27, false),
+        ("_", 27, true), ("/", 44, false), ("?", 44, true), ("\\", 42, false), ("|", 42, true),
+        ("\"", 39, true), ("`", 50, false), ("~", 50, true),
+    ]
+    for (character, key, shift) in cases {
+        let got = KeyStrokes.textKey(for: character)
+        check(got?.virtualKey == key && got?.shift == shift, "text \(character): key \(key), shift \(shift), got \(String(describing: got))")
+    }
+    for character: Character in ["é", "ñ", "😀", "\u{7F}", "\n", "\t"] {
+        check(KeyStrokes.textKey(for: character) == nil, "text \(character.unicodeScalars.first!.value): no key")
+    }
+    var all = 0
+    for ascii in 0x20..<0x7F where KeyStrokes.textKey(for: Character(UnicodeScalar(UInt8(ascii)))) != nil { all += 1 }
+    check(all == 95, "every printable ASCII character has a key: \(all) of 95")
+}
+
 print(failures == 0 ? "ok: \(checks) checks" : "FAILED: \(failures) of \(checks) checks")
 exit(failures == 0 ? 0 : 1)

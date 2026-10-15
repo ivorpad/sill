@@ -420,16 +420,22 @@ final class InputInjector {
             case "\t": tap(virtualKey: 48)          // Tab
             case "\u{8}": tap(virtualKey: 51)       // Delete (backspace)
             default:
-                // Virtual key 0 with a Unicode string: the character arrives whatever the Mac's
-                // keyboard layout is, which is what a software keyboard on the phone means.
+                // The Unicode string carries the character whatever the Mac's keyboard layout is,
+                // which is what a software keyboard on the phone means; the keycode is the US key
+                // the character sits on (KeyStrokes.textKey), for apps that read keycodes, and 0
+                // for anything else.
                 let units = Array(character.utf16)
-                guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else { continue }
+                let key = KeyStrokes.textKey(for: character)
+                let virtualKey = CGKeyCode(key?.virtualKey ?? 0)
+                guard let down = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+                      let up = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false) else { continue }
                 down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
                 up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
                 // No modifiers, explicitly: the character carries its own case, and an event made
                 // from this source after a ⌘Space (the Spotlight key) could otherwise inherit ⌘,
                 // which Spotlight's field ignores (typing into Spotlight did nothing, 2026-09-23).
+                // Never shift either, for a shifted character: a posted event leaves its flags in the
+                // HID state table the next click starts from (KeyStrokes); the string has the case.
                 down.flags = []
                 up.flags = []
                 _ = post(down)

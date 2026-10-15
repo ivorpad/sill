@@ -180,6 +180,47 @@ package struct KeyStrokes: Sendable {
     package static let option: UInt64 = 0x08_0000
     package static let command: UInt64 = 0x10_0000
 
+    /// The key a typed character sits on in the US layout, and whether shift makes it: a character
+    /// a device types as text goes out with this key's virtual keycode beside its Unicode string, so
+    /// an app that reads the keycode (Ghostty's keybindings, games) sees the key the character is on.
+    /// With keycode 0 for everything, every character was an A press to those apps: after tmux's
+    /// ⌃B a typed `v` reached Ghostty as A. Nil for anything outside printable ASCII, which keeps
+    /// keycode 0 and its string alone. On a Mac with another layout the keycode is the US one's;
+    /// apps that read the string, most of them, are unaffected.
+    package static func textKey(for character: Character) -> (virtualKey: UInt16, shift: Bool)? {
+        guard let ascii = character.asciiValue, ascii >= 0x20, ascii < 0x7F else { return nil }
+        let shifted: [Character: Character] = [
+            "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8", "(": "9",
+            ")": "0", "_": "-", "+": "=", "{": "[", "}": "]", "|": "\\", ":": ";", "\"": "'", "~": "`",
+            "<": ",", ">": ".", "?": "/",
+        ]
+        var base = character
+        var shift = false
+        if character.isUppercase { base = Character(character.lowercased()); shift = true }
+        else if let unshifted = shifted[character] { base = unshifted; shift = true }
+        let usage: UInt16?
+        switch base {
+        case "a"..."z": usage = 0x04 + UInt16(base.asciiValue! - 0x61)
+        case "1"..."9": usage = 0x1E + UInt16(base.asciiValue! - 0x31)
+        case "0": usage = 0x27
+        case " ": usage = 0x2C
+        case "-": usage = 0x2D
+        case "=": usage = 0x2E
+        case "[": usage = 0x2F
+        case "]": usage = 0x30
+        case "\\": usage = 0x31
+        case ";": usage = 0x33
+        case "'": usage = 0x34
+        case "`": usage = 0x35
+        case ",": usage = 0x36
+        case ".": usage = 0x37
+        case "/": usage = 0x38
+        default: usage = nil
+        }
+        guard let usage, let key = virtualKeys[usage] else { return nil }
+        return (key, shift)
+    }
+
     /// USB HID usage (UIKeyboardHIDUsage on the client) → macOS virtual keycode (Carbon kVK_*).
     /// Only the keys a phone keyboard can send; anything else is dropped and counted.
     package static let virtualKeys: [UInt16: UInt16] = [
