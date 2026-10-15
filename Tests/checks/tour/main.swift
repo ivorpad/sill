@@ -769,12 +769,12 @@ func words(_ t: TourTopic, _ layout: TourLayout, mac: String = "Mac mini", devic
 func texts(_ c: TourCopy) -> [String] { c.rows.map(\.text) }
 let touchPad = words(.touch, L, first: true)
 check(touchPad.title == "Tap, Hold and Drag" && touchPad.subtitle == "What you do here happens on Mac mini.", "touch: title and subtitle")
-check(texts(touchPad) == ["Tap to click.", "Touch and hold to right-click.", "Drag to scroll.", "Apple Pencil works as a mouse."], "touch on iPad: \(texts(touchPad))")
+check(texts(touchPad) == ["Tap to click.", "Touch and hold to right-click.", "Drag to move the pointer; two fingers scroll or pinch to zoom.", "Apple Pencil works as a mouse."], "touch on iPad: \(texts(touchPad))")
 check(touchPad.rows.map(\.symbol) == ["hand.tap", "contextualmenu.and.cursorarrow", "hand.draw", "applepencil"], "touch's symbols")
 check(touchPad.rows[0].spans == [TourSpan(text: "Tap", strong: true), TourSpan(text: " to click.", strong: false)], "the control's name semibold")
 check(touchPad.hint == "The picture of Mac mini fills the screen below the bar.", "touch's hint sideways")
 check(words(.touch, P).hint == "The picture of Mac mini fills the top half of the screen.", "touch's hint upright")
-check(texts(words(.touch, L, device: "iPhone")) == ["Tap to click.", "Touch and hold to right-click.", "Drag to scroll."], "no Pencil row on iPhone")
+check(texts(words(.touch, L, device: "iPhone")) == ["Tap to click.", "Touch and hold to right-click.", "Drag to move the pointer; two fingers scroll or pinch to zoom."], "no Pencil row on iPhone")
 check(words(.touch, L, mac: "").subtitle == "What you do here happens on your Mac." && words(.touch, P, mac: "").hint == "The picture of your Mac fills the top half of the screen.",
       "the “your Mac” fallback")
 let barL = words(.bar, L)

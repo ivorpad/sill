@@ -5,11 +5,28 @@ import CoreMedia
 import SwiftUI
 import StreamProtocol
 
-/// A UIView whose layer is an AVSampleBufferDisplayLayer, which decodes HEVC in hardware itself.
-/// No VTDecompressionSession needed for the spike.
+/// The stream panel's picture: an AVSampleBufferDisplayLayer, which decodes HEVC in hardware itself
+/// (no VTDecompressionSession needed), in a subview of its own so pinch to zoom can draw it larger
+/// than this view (`zoom`), which clips it.
 final class HEVCDisplayView: UIView {
-    override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
-    private var displayLayer: AVSampleBufferDisplayLayer { layer as! AVSampleBufferDisplayLayer }
+    /// The video's own view, framed at `videoRect` once the frame size is known.
+    private final class Surface: UIView {
+        override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
+    }
+    private let surface: Surface
+    /// The surface's layer, kept here so `apply` and `enqueue` on the network queue never ask a view.
+    private let displayLayer: AVSampleBufferDisplayLayer
+
+    /// Pinch to zoom (`PictureZoom`), changed by `InputOverlayView`. Main thread. Back to the fitted
+    /// picture whenever the frame size changes (another window, an Aa resize) and when the session
+    /// ends: a zoom into one picture means nothing in the next.
+    var zoom = PictureZoom() {
+        didSet {
+            guard zoom != oldValue else { return }
+            setNeedsLayout()
+            layoutIfNeeded()   // the touch that zoomed and the next frame should see the same rect
+        }
+    }
 
     private var formatDescription: CMVideoFormatDescription?
     private var waitingForKeyframe = true
@@ -53,10 +70,17 @@ final class HEVCDisplayView: UIView {
     private var hudSubscriptions = Set<AnyCancellable>()
     #endif
 
-    /// Where `resizeAspect` actually draws a `videoSize` frame inside `bounds`: the same letterboxed
-    /// rect the layer uses, which is what maps a touch to a fraction of the frame.
-    /// Returns `.zero` while the video size is unknown, so callers can tell "no video" from "top left".
-    static func videoRect(in bounds: CGRect, videoSize: CGSize) -> CGRect {
+    /// Where a `videoSize` frame is drawn inside `bounds`: aspect-fit and letterboxed, then zoomed
+    /// (`PictureZoom.rect`), which is what maps a touch to a fraction of the frame. It may reach past
+    /// `bounds` when zoomed. Returns `.zero` while the video size is unknown, so callers can tell
+    /// "no video" from "top left".
+    static func videoRect(in bounds: CGRect, videoSize: CGSize, zoom: PictureZoom = PictureZoom()) -> CGRect {
+        guard videoSize.width > 0, videoSize.height > 0, bounds.width > 0, bounds.height > 0 else { return .zero }
+        return zoom.rect(fitted: fittedRect(in: bounds, videoSize: videoSize), in: bounds)
+    }
+
+    /// The aspect-fit rect alone, before any zoom: what `PictureZoom` scales.
+    static func fittedRect(in bounds: CGRect, videoSize: CGSize) -> CGRect {
         guard videoSize.width > 0, videoSize.height > 0, bounds.width > 0, bounds.height > 0 else { return .zero }
         let scale = min(bounds.width / videoSize.width, bounds.height / videoSize.height)
         let size = CGSize(width: videoSize.width * scale, height: videoSize.height * scale)
@@ -66,9 +90,15 @@ final class HEVCDisplayView: UIView {
     }
 
     override init(frame: CGRect) {
+        let surface = Surface(frame: CGRect(origin: .zero, size: frame.size))
+        self.surface = surface
+        displayLayer = surface.layer as! AVSampleBufferDisplayLayer
         super.init(frame: frame)
         backgroundColor = .black
+        clipsToBounds = true
+        surface.isUserInteractionEnabled = false
         displayLayer.videoGravity = .resizeAspect
+        addSubview(surface)
         layer.addSublayer(cursorLayer)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -81,12 +111,16 @@ final class HEVCDisplayView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        placeCursor()   // rotation and letterbox changes move the video rect under it
+        // The whole view until the frame size is known, then exactly the (zoomed) video rect, where
+        // `resizeAspect` fills it edge to edge.
+        let rect = Self.videoRect(in: bounds, videoSize: pointerVideoSize, zoom: zoom)
+        surface.frame = rect == .zero ? bounds : rect
+        placeCursor()   // rotation, letterbox and zoom changes move the video rect under it
         #if DEBUG
         if let debugFrame {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            debugFrame.frame = Self.videoRect(in: bounds, videoSize: pointerVideoSize)
+            debugFrame.frame = Self.videoRect(in: bounds, videoSize: pointerVideoSize, zoom: zoom)
             CATransaction.commit()
         }
         if let hud {
@@ -129,6 +163,7 @@ final class HEVCDisplayView: UIView {
     /// sets would give it, for a mock that never streams; and a dim rectangle where that frame is
     /// drawn, so a photo shows what the sprite points into (the mock's picture is black).
     func debugFrameSize(_ size: CGSize) {
+        if size != pointerVideoSize { zoom = PictureZoom() }
         pointerVideoSize = size
         if debugFrame == nil {
             let frame = CALayer()
@@ -179,7 +214,7 @@ final class HEVCDisplayView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        let rect = Self.videoRect(in: bounds, videoSize: pointerVideoSize)
+        let rect = Self.videoRect(in: bounds, videoSize: pointerVideoSize, zoom: zoom)
         guard let p = pointer, rect.width > 0, rect.height > 0 else {
             cursorLayer.isHidden = true
             return
@@ -254,7 +289,9 @@ final class HEVCDisplayView: UIView {
         let size = CGSize(width: CGFloat(dimensions.width), height: CGFloat(dimensions.height))
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            if size != self.pointerVideoSize { self.zoom = PictureZoom() }
             self.pointerVideoSize = size
+            self.setNeedsLayout()   // the surface takes the new video rect
             self.onVideoSize?(size)
             self.placeCursor()
             self.onVideoSizeForPointer?(size)
@@ -272,7 +309,9 @@ final class HEVCDisplayView: UIView {
         displayLayer.flushAndRemoveImage()
         // The pointer's copy of the size is main-thread state; the client zeroes its own alongside.
         DispatchQueue.main.async { [weak self] in
+            self?.zoom = PictureZoom()
             self?.pointerVideoSize = .zero
+            self?.setNeedsLayout()
             self?.placeCursor()
         }
     }

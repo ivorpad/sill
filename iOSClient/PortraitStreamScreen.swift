@@ -404,6 +404,7 @@ struct PortraitStreamScreen: View {
         ZStack {
             StreamView(client: client)
             InputOverlay(videoSize: client.videoSize,
+                         display: client.displayView,
                          send: { client.sendInput($0) },
                          setOwnPointer: { client.setOwnPointer($0, from: $1) },
                          proxy: overlay,

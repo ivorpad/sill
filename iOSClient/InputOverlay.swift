@@ -52,6 +52,20 @@ final class InputOverlayView: UIView, UIKeyInput {
     private let strokes = StrokeObserver()
     /// The finger pan, for where a scroll that a stroke's silence closes ends.
     private weak var scrollPan: UIPanGestureRecognizer?
+    /// True while a one-finger pan is moving the Mac's pointer. Decided at `.began`: a pan that began
+    /// with one finger stays a pointer move if a second lands.
+    private var pointerPan = false
+
+    /// The picture under this view, whose `zoom` the pinch changes and every touch is mapped through.
+    /// Same frame as this view (StreamScreen's and PortraitStreamScreen's ZStacks).
+    weak var display: HEVCDisplayView?
+    private var zoom: PictureZoom {
+        get { display?.zoom ?? PictureZoom() }
+        set { display?.zoom = newValue }
+    }
+    /// The frame point (fractions) a pinch, or a two-finger move of a zoomed picture, holds under
+    /// the fingers, and the scale it started from. Nil when neither is going.
+    private var zoomAnchor: (point: CGPoint, scale: CGFloat)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -80,12 +94,20 @@ final class InputOverlayView: UIView, UIKeyInput {
         longPress.allowedTouchTypes = directOnly
         addGestureRecognizer(longPress)
 
-        // One or two fingers scroll; the Mac gets the content delta, not a drag.
+        // One finger moves the Mac's pointer (`movePointer`); two scroll, the Mac getting the
+        // content delta, not a drag, or move a zoomed picture (`moveZoomed`).
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan))
         pan.minimumNumberOfTouches = 1
         pan.maximumNumberOfTouches = 2
         pan.allowedTouchTypes = directOnly
         addGestureRecognizer(pan)
+
+        // Two fingers pinching zoom the picture on this device (PictureZoom); the Mac hears nothing.
+        // Which of this and the pan a two-finger stroke is, UIKit decides by which recognizes first:
+        // fingers moving apart or together are a pinch, fingers moving together the same way a pan.
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch))
+        pinch.allowedTouchTypes = directOnly
+        addGestureRecognizer(pinch)
 
         // Pencil hover on the iPads that support it, and the trackpad/mouse pointer everywhere.
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover))
@@ -104,8 +126,9 @@ final class InputOverlayView: UIView, UIKeyInput {
 
     // MARK: - Coordinates
 
-    /// Where the layer actually draws the video inside this view.
-    private var videoRect: CGRect { HEVCDisplayView.videoRect(in: bounds, videoSize: videoSize) }
+    /// Where the video is drawn inside this view, zoomed or not.
+    private var videoRect: CGRect { HEVCDisplayView.videoRect(in: bounds, videoSize: videoSize, zoom: zoom) }
+    private var fittedRect: CGRect { HEVCDisplayView.fittedRect(in: bounds, videoSize: videoSize) }
 
     /// A point in this view as a fraction of the video frame. Points in the letterbox are clamped to
     /// the video's edge when `clamped` (moves and drags should keep working past the edge) and
@@ -166,6 +189,8 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// positive dy).
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard !strokes.silent else { return }
+        // One finger moves the Mac's pointer; zoomed in, two fingers move the picture.
+        if movePointer(gesture) || moveZoomed(gesture) { return }
         let rect = videoRect
         switch gesture.state {
         case .began:
@@ -197,6 +222,83 @@ final class InputOverlayView: UIView, UIKeyInput {
         default:
             lastPanTranslation = .zero
         }
+    }
+
+    // MARK: - Zoom
+
+    /// Two fingers pinching: the picture grows or shrinks about the point between them, and follows
+    /// them as they move. Let go under `PictureZoom.snapBelow` and it is fitted again.
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        let fitted = fittedRect
+        switch gesture.state {
+        case .began:
+            guard !strokes.silent, gesture.numberOfTouches >= 2, fitted.width > 0,
+                  let a = fraction(gesture.location(in: self)) else { zoomAnchor = nil; return }
+            momentum.stop()
+            zoomAnchor = (a, zoom.scale)
+        case .changed:
+            guard let anchor = zoomAnchor, !strokes.silent else { return }
+            // One finger lifted mid-pinch: hold still rather than jump to the remaining finger.
+            guard gesture.numberOfTouches >= 2 else { return }
+            zoom = zoom.moved(to: anchor.scale * gesture.scale, anchor: anchor.point,
+                              at: gesture.location(in: self), fitted: fitted, in: bounds)
+        default:
+            guard zoomAnchor != nil else { return }
+            zoomAnchor = nil
+            zoom = zoom.settled
+        }
+    }
+
+    /// A one-finger pan: the Mac's pointer follows the finger, no button down (a tap clicks, a long
+    /// press right-clicks). This device's pointer shows under it, as the portrait trackpad's does.
+    /// Returns true when it took this callback.
+    private func movePointer(_ gesture: UIPanGestureRecognizer) -> Bool {
+        switch gesture.state {
+        case .began:
+            guard gesture.numberOfTouches == 1 else { return false }
+            momentum.stop()
+            pointerPan = true
+            fallthrough
+        case .changed:
+            guard pointerPan else { return false }
+            if let at = sendPointer(.move, at: gesture.location(in: self), clamped: true) { setOwnPointer(at, .trackpad) }
+            return true
+        default:
+            guard pointerPan else { return false }
+            pointerPan = false
+            return true
+        }
+    }
+
+    /// A two-finger pan over a zoomed picture moves the picture, at its scale, and sends nothing.
+    /// Returns true when it took this callback. Decided at `.began`; a pan that began as a scroll
+    /// stays one, and one that began moving the picture stays that.
+    private func moveZoomed(_ gesture: UIPanGestureRecognizer) -> Bool {
+        switch gesture.state {
+        case .began:
+            guard zoom.isZoomed, gesture.numberOfTouches >= 2,
+                  let a = fraction(gesture.location(in: self)) else { return false }
+            momentum.stop()
+            zoomAnchor = (a, zoom.scale)
+            return true
+        case .changed:
+            guard let anchor = zoomAnchor else { return false }
+            guard gesture.numberOfTouches >= 2 else { return true }
+            zoom = zoom.moved(to: anchor.scale, anchor: anchor.point, at: gesture.location(in: self),
+                              fitted: fittedRect, in: bounds)
+            return true
+        default:
+            guard zoomAnchor != nil else { return false }
+            zoomAnchor = nil
+            return true
+        }
+    }
+
+    /// A view point as a fraction of the drawn frame, unclamped, or nil with no video.
+    private func fraction(_ point: CGPoint) -> CGPoint? {
+        let rect = videoRect
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        return CGPoint(x: (point.x - rect.minX) / rect.width, y: (point.y - rect.minY) / rect.height)
     }
 
     /// A stroke just went silent (TrackpadGestures: three fingers down): a scroll it had begun (a first
@@ -505,6 +607,8 @@ final class InputOverlayProxy {
 
 struct InputOverlay: UIViewRepresentable {
     let videoSize: CGSize
+    /// The client's display view under this overlay, for pinch to zoom (`InputOverlayView.display`).
+    let display: HEVCDisplayView
     let send: (InputEvent) -> Void
     /// `StreamClient.setOwnPointer`; see `InputOverlayView.setOwnPointer`.
     let setOwnPointer: (CGPoint?, PointerPresence.Origin) -> Void
@@ -523,6 +627,7 @@ struct InputOverlay: UIViewRepresentable {
 
     func updateUIView(_ uiView: InputOverlayView, context: Context) {
         uiView.videoSize = videoSize
+        uiView.display = display
         uiView.send = send
         uiView.setOwnPointer = setOwnPointer
         uiView.latchedModifiers = latchedModifiers

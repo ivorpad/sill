@@ -505,7 +505,7 @@ enum TourPolicy {
         case .touch:
             var rows = [row("hand.tap", [strong("Tap"), plain(" to click.")]),
                         row("contextualmenu.and.cursorarrow", [strong("Touch and hold"), plain(" to right-click.")]),
-                        row("hand.draw", [strong("Drag"), plain(" to scroll.")])]
+                        row("hand.draw", [strong("Drag"), plain(" to move the pointer; two fingers scroll or pinch to zoom.")])]
             if iPad { rows.append(row("applepencil", [strong("Apple Pencil"), plain(" works as a mouse.")])) }
             let hint: String
             switch layout {

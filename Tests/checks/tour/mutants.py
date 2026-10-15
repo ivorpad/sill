@@ -77,7 +77,7 @@ MUTANTS = [
     ("a gesture word in a VoiceOver row", "if voiceOver {\n                rows = [row(\"hand.point.up.left\"", "if false {\n                rows = [row(\"hand.point.up.left\""),
     ("the trackpad's rows under VoiceOver", "if !voiceOver {\n                rows.append(row(\"cursorarrow.click.2\"", "if true {\n                rows.append(row(\"cursorarrow.click.2\""),
     ("laptop's subtitle on a card that is not the run's first", "subtitle: firstOfRun ? subtitle : nil", "subtitle: subtitle"),
-    ("one word of the copy changed", "plain(\" to scroll.\")", "plain(\" to scroll it.\")"),
+    ("one word of the copy changed", "plain(\" to move the pointer; two fingers scroll or pinch to zoom.\")", "plain(\" to move it; two fingers scroll or pinch to zoom.\")"),
     ("no Keyboard row on a phone's bar card", "if layout != .portrait { rows.append(keyboardRow) }", "if layout == .landscape { rows.append(keyboardRow) }"),
     ("the keyboard key's row on a phone", "if layout != .phone {\n                rows.append(row(\"keyboard\", [strong(\"The keyboard key\")", "if true {\n                rows.append(row(\"keyboard\", [strong(\"The keyboard key\")"),
     ("a phone's laptop hint as the halves'", "rows: rows, hint: layout == .phone ? \"Under the windows", "rows: rows, hint: layout == .portrait ? \"Under the windows"),

@@ -859,6 +859,7 @@ struct StreamScreen: View {
                 StreamView(client: client)
                 // Same frame as the video, so a touch maps straight onto the streamed frame.
                 InputOverlay(videoSize: client.videoSize,
+                             display: client.displayView,
                              send: { client.sendInput($0) },
                              setOwnPointer: { client.setOwnPointer($0, from: $1) },
                              proxy: overlay,
