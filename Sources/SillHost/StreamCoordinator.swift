@@ -249,9 +249,13 @@ package final class StreamCoordinator {
     /// The shared clipboard (kind 29): this Mac's copies out to the devices that share it, theirs in.
     /// Runs while one is connected (`refreshClipboard`).
     let clipboard = ClipboardSync()
+    /// Locking and unlocking the Mac from a device (kind 44, StreamCoordinator+LockScreen.swift): the typing
+    /// sequence with its attempt count, and what lock again remembers of the device that unlocked it.
+    let shield = ShieldTyping()
+    let lockAgain = LockAgainWatch()
     /// A window stream's pointer held at its bottom edge: the Desktop with the Dock (DockEdge).
     private var dockEdge = DockEdge()
-    private let macName = Host.current().localizedName ?? "Mac"
+    let macName = Host.current().localizedName ?? "Mac"
     /// In every window list (`WindowList.launchID`): a device moving its session from AWDL to the
     /// network checks that the new connection reaches this same running host, since the Bonjour
     /// name it found it by can belong to another Mac too. Per launch, so nothing is stored.
@@ -265,7 +269,7 @@ package final class StreamCoordinator {
     /// as before.
     package let remote: RemoteAccess?
     /// Each admitted connection's route (home and its origin, or the remote door's), from the server.
-    private var routes: [ObjectIdentifier: ClientRoute] = [:]
+    var routes: [ObjectIdentifier: ClientRoute] = [:]
     /// Away from home (docs/remote-bundle-plan.md §5; AwayPolicy): every connected device is away,
     /// so the away quality is the target. Kept while no device is connected; the next to register
     /// decides (`routesChanged`). What the Mac's card, menu and every device are told.
@@ -279,7 +283,7 @@ package final class StreamCoordinator {
     private var flipWait: ObjectIdentifier?
     private var flipWaitToken = 0
     /// Each connection whose catalog went out (`sendCatalog`): the ones settings states reach.
-    private var connections: [ObjectIdentifier: NWConnection] = [:]
+    var connections: [ObjectIdentifier: NWConnection] = [:]
     /// Each connection's link while it does not keep up (LinkJudge, docs/remote-bundle-plan.md §6.5):
     /// its kind 16's `link`, and the card's. A state leaves out a report whose bitrate (the running
     /// one when it was judged) is no longer the target's, so the answer to the pick that lowers it
@@ -332,7 +336,9 @@ package final class StreamCoordinator {
         let inputLog = InputInjector.testInputLog(synthetic: synthetic, environment: env)
         pointer = PointerWatch(synthetic: synthetic, path: path.path)
         softwareOnly = software.on
+        let testHost = DoorPolicy.isTestHost(advertises: !synthetic, bundled: !testHooks)   // as the server decides it
         testHookLines = [path.line, software.line, inputLog.line].compactMap { $0 }
+            + UnlockTestHooks.lines(testHost: testHost, environment: env)
         status = HostStatus()
         var home = StreamServer.HomeDoorMode.plain
         if homePairing, let remote {
@@ -346,6 +352,7 @@ package final class StreamCoordinator {
         server = try StreamServer(advertise: !synthetic, home: home, testHooks: testHooks)
         server.macName = macName                           // the update goodbye names this Mac (DeviceGate)
         TestHooks.reportIgnored(testHost: server.isTestHost)
+        SessionLock.shared.testHost = server.isTestHost
         // A host that does not advertise, `--synthetic` in the CLI and in the app alike (as
         // `injector.dryRun` below), not `server.isTestHost`, which also leaves out Sill.app's own
         // executable: that narrowing is for the door and pairing hooks (TestHooks), and a gesture's
@@ -390,6 +397,7 @@ package final class StreamCoordinator {
                 guard let self else { return }
                 let id = ObjectIdentifier(connection)
                 self.routes[id] = route
+                self.lockScreenConnectionJoined(id, route: route)
                 // A paired device shows its paired name until its own stats arrive, and a remote one
                 // its route; a home device its link (Wired, Wi-Fi, Direct) as soon as it is known.
                 self.status.update {
@@ -429,6 +437,7 @@ package final class StreamCoordinator {
                 let id = ObjectIdentifier(connection)
                 self.gestureArrivals[id] = nil
                 self.routes[id] = nil
+                self.lockScreenConnectionLeft(id)
                 self.lastPairingWanted[id] = nil
                 self.connections[id] = nil
                 self.refreshClipboard()
@@ -462,6 +471,7 @@ package final class StreamCoordinator {
                 guard let self else { return }
                 let wasEmpty = self.catalog.clientCount == 0
                 self.catalog.clientCount = count          // the catalog idles itself at 0
+                SessionLock.shared.watch(count > 0)       // the console is read once a second while a device is here
                 // Nobody is watching: stop capturing and encoding. The next client picks afresh.
                 if count == 0 { self.viewport = nil; self.clientFPS = [:]; self.viewports = [:]; self.desktopPicker = nil }   // the next device starts from scratch
                 if count == 0 { self.gestureChords.forget() }                 // and did not open a view it could close
@@ -575,6 +585,9 @@ package final class StreamCoordinator {
         EncoderProbe.onStalledProbeBack = { [weak self] seconds in
             Task { @MainActor in self?.stalledProbeCameBack(after: seconds) }
         }
+        // The Mac's lock state reaches every device in its window list (docs/lock-screen-plan.md).
+        SessionLock.shared.onChange = { [weak self] old, new in self?.lockStateChanged(from: old, to: new) }
+        SessionLock.shared.refresh()
     }
 
     /// How the Devices pane says a paired device last connected at home: "over the USB cable",
@@ -808,6 +821,8 @@ package final class StreamCoordinator {
             refreshClipboard(restart: true)
             broadcastList()
         }
+        // The unlock switches: each device's list says `unlock` or not (the Mac's alone, no restart).
+        if old.unlockPolicy != next.unlockPolicy { broadcastList() }
         // The listener's, not the pipeline's: StreamServer replaces it and connected devices keep streaming.
         if old.directWireless != next.directWireless { server.setPeerToPeer(next.directWireless) }
         // The doors', not the pipeline's: RemoteAccess starts, stops or moves the remote door, and
@@ -930,6 +945,7 @@ package final class StreamCoordinator {
     // MARK: Client messages
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
+        lockAgain.noteActivity(message.kind, from: ObjectIdentifier(connection))   // another device using the Mac
         switch message.kind {
         case .selectSource:
             guard let source = Wire.decode(StreamSource.self, from: message.payload) else { return }
@@ -970,6 +986,8 @@ package final class StreamCoordinator {
         case .input:
             guard let event = Wire.decode(InputEvent.self, from: message.payload) else { return }
             let device = ObjectIdentifier(connection)
+            // Key and text input while an unlock attempt is typing: StreamCoordinator+LockScreen.
+            if withheldDuringAttempt(event, from: device) { return }
             guard let rect = currentSourceRect() else {
                 // Nothing streams (between sources, or the stream stopped: the window closed under a
                 // drag): input has nowhere to land. The up of a key or a button the Mac has down still
@@ -993,6 +1011,7 @@ package final class StreamCoordinator {
             // stroke makes one, so more is a runaway or hostile client.
             guard let gesture = Wire.decode(TrackpadGesture.self, from: message.payload) else { return }
             let id = ObjectIdentifier(connection)
+            guard takesKeyInput(from: id) else { Stats.shared.bump("in.unlockDrop"); return }   // as key input
             let now = CFAbsoluteTimeGetCurrent()
             var recent = (gestureArrivals[id] ?? []).filter { now - $0 < 1 }
             guard recent.count < Self.gesturesPerSecond else {
@@ -1014,6 +1033,9 @@ package final class StreamCoordinator {
             }
             guard let item = Wire.decode(ClipboardItem.self, from: message.payload) else { return }
             clipboard.received(item, from: deviceName(connection))
+        case .lockScreen:
+            // Lock or unlock this Mac (docs/lock-screen-plan.md): judged, typed and answered in the extension.
+            await handleLockScreen(message, from: connection)
         case .viewport:
             guard let v = Wire.decode(Viewport.self, from: message.payload) else { return }
             viewport = v
@@ -1673,7 +1695,7 @@ package final class StreamCoordinator {
     /// How long held input waits for the app to become frontmost before it is replayed anyway.
     private static let activationTimeout: TimeInterval = 0.6
 
-    private func deliver(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device) {
+    func deliver(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device) {
         // Queue while holding, and while anything is still queued, so order is never inverted.
         if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil { heldInput.append(.input(event, rect, device)); return }
         logClick(event, in: rect)
@@ -2480,7 +2502,8 @@ package final class StreamCoordinator {
 
     // MARK: Catalog to clients
 
-    /// The window list for one connection: `clipboard` only to one that shares it (ClipboardPolicy).
+    /// The window list for one connection: `clipboard` only to one that shares it (ClipboardPolicy), and
+    /// `unlock` only to one that may unlock this Mac (UnlockPolicy); `locked` is the Mac's, the same for all.
     private func listMessage(for id: ObjectIdentifier) -> StreamMessage {
         StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
@@ -2488,12 +2511,14 @@ package final class StreamCoordinator {
                                                       gestures: TrackpadGesture.generation,
                                                       clipboard: config.clipboardPolicy.advertised(away: routes[id]?.isAway ?? true),
                                                       deviceDisplay: deviceDisplayOffered ? Self.deviceDisplayGeneration : nil,
-                                                      deviceDisplayLive: active == .desktop && runningDeviceDisplay?.picker == id ? true : nil)))
+                                                      deviceDisplayLive: active == .desktop && runningDeviceDisplay?.picker == id ? true : nil,
+                                                      locked: lockedAsk(), lockScreen: LockScreenRequest.generation,
+                                                      unlock: unlockAdvertised(for: id))))
     }
 
     /// Each connection its own list, since `clipboard` differs between them; one that has not had its
     /// catalog yet gets the list there (`sendCatalog`).
-    private func broadcastList() { server.send(each: connections.map { ($0.value, listMessage(for: $0.key)) }) }
+    func broadcastList() { server.send(each: connections.map { ($0.value, listMessage(for: $0.key)) }) }
 
     // MARK: The shared clipboard
 
@@ -2545,6 +2570,7 @@ package final class StreamCoordinator {
     private func sendCatalog(to connection: NWConnection) {
         let now = Date().timeIntervalSince1970
         print("Catalog → \(connection.endpoint): \(catalog.infos.count) windows, \(catalog.allIcons.count) icons, \(catalog.installedApps.count) apps")
+        SessionLock.shared.refresh()      // the list says whether the Mac is locked as of now
         server.send(listMessage(for: ObjectIdentifier(connection)), to: connection)
         // What the settings are, silently (the line above is the only one printed on connect). An
         // older device skips the kind. Recorded as what this connection was last sent, and only
@@ -2639,7 +2665,7 @@ package final class StreamCoordinator {
     }
 
     /// "iPad (iPad14,1)" once the device has sent its stats, its address until then.
-    private func deviceName(_ connection: NWConnection) -> String {
+    func deviceName(_ connection: NWConnection) -> String {
         status.snapshot.devices.first { $0.id == ObjectIdentifier(connection) }?.name ?? "\(connection.endpoint)"
     }
 }

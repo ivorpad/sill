@@ -1,0 +1,6 @@
+# Compiled as one module by ../module.py, with main.swift: the three files of Sources/StreamProtocol this
+# check needs, LockScreen.swift (the rules), StreamMessage.swift (kind 44) and Switcher.swift (the window
+# list's fields, and Wire). Nothing else of the module is compiled, so each mutant builds in two seconds.
+Sources/StreamProtocol/LockScreen.swift
+Sources/StreamProtocol/StreamMessage.swift
+Sources/StreamProtocol/Switcher.swift

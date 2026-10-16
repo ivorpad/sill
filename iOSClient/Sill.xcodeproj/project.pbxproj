@@ -33,6 +33,11 @@
 		A1000001000000000000A301 /* PointerPresence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000F301 /* PointerPresence.swift */; };
 		A1000001000000000000AC01 /* PictureZoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FC01 /* PictureZoom.swift */; };
 		A1000001000000000000AC02 /* StreamClient+Clipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FC02 /* StreamClient+Clipboard.swift */; };
+		A1000001000000000000AD01 /* StreamClient+LockScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FD01 /* StreamClient+LockScreen.swift */; };
+		A1000001000000000000AD03 /* LockScreenPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FD03 /* LockScreenPolicy.swift */; };
+		A1000001000000000000AD04 /* SavedUnlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FD04 /* SavedUnlock.swift */; };
+		A1000001000000000000AD05 /* StreamClient+Menus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FD05 /* StreamClient+Menus.swift */; };
+		A1000001000000000000AD02 /* LockedCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FD02 /* LockedCard.swift */; };
 		A1000001000000000000A201 /* SillLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000F201 /* SillLinks.swift */; };
 		A1000001000000000000A01D /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000F01D /* DeviceIdentity.swift */; };
 		A1000001000000000000A016 /* SavedMacs.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000F016 /* SavedMacs.swift */; };
@@ -84,6 +89,11 @@
 		A1000001000000000000F301 /* PointerPresence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerPresence.swift; sourceTree = "<group>"; };
 		A1000001000000000000FC01 /* PictureZoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PictureZoom.swift; sourceTree = "<group>"; };
 		A1000001000000000000FC02 /* StreamClient+Clipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+Clipboard.swift"; sourceTree = "<group>"; };
+		A1000001000000000000FD01 /* StreamClient+LockScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+LockScreen.swift"; sourceTree = "<group>"; };
+		A1000001000000000000FD03 /* LockScreenPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreenPolicy.swift; sourceTree = "<group>"; };
+		A1000001000000000000FD04 /* SavedUnlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedUnlock.swift; sourceTree = "<group>"; };
+		A1000001000000000000FD05 /* StreamClient+Menus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+Menus.swift"; sourceTree = "<group>"; };
+		A1000001000000000000FD02 /* LockedCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockedCard.swift; sourceTree = "<group>"; };
 		A1000001000000000000F201 /* SillLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SillLinks.swift; sourceTree = "<group>"; };
 		A1000001000000000000F01D /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
 		A1000001000000000000F016 /* SavedMacs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedMacs.swift; sourceTree = "<group>"; };
@@ -144,6 +154,11 @@
 				A1000001000000000000F301 /* PointerPresence.swift */,
 				A1000001000000000000FC01 /* PictureZoom.swift */,
 				A1000001000000000000FC02 /* StreamClient+Clipboard.swift */,
+				A1000001000000000000FD01 /* StreamClient+LockScreen.swift */,
+				A1000001000000000000FD03 /* LockScreenPolicy.swift */,
+				A1000001000000000000FD04 /* SavedUnlock.swift */,
+				A1000001000000000000FD05 /* StreamClient+Menus.swift */,
+				A1000001000000000000FD02 /* LockedCard.swift */,
 				A1000001000000000000F004 /* HEVCDisplayView.swift */,
 				A1000001000000000000F009 /* InputOverlay.swift */,
 				A1000001000000000000F00B /* TrackpadView.swift */,
@@ -287,6 +302,11 @@
 				A1000001000000000000A301 /* PointerPresence.swift in Sources */,
 				A1000001000000000000AC01 /* PictureZoom.swift in Sources */,
 				A1000001000000000000AC02 /* StreamClient+Clipboard.swift in Sources */,
+				A1000001000000000000AD01 /* StreamClient+LockScreen.swift in Sources */,
+				A1000001000000000000AD03 /* LockScreenPolicy.swift in Sources */,
+				A1000001000000000000AD04 /* SavedUnlock.swift in Sources */,
+				A1000001000000000000AD05 /* StreamClient+Menus.swift in Sources */,
+				A1000001000000000000AD02 /* LockedCard.swift in Sources */,
 				A1000001000000000000A004 /* HEVCDisplayView.swift in Sources */,
 				A1000001000000000000A008 /* InputOverlay.swift in Sources */,
 				A1000001000000000000A00A /* TrackpadView.swift in Sources */,

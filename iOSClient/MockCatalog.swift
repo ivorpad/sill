@@ -83,6 +83,7 @@ enum MockCatalog {
         client.thumbnails = thumbnails
 
         seed(client, settings: settings)
+        seedLockScreen(client, settings: settings)
         // `-SillOverlayLine asking|shown|openonmac|locked|noanswer`: Pair This iPad…'s line over a
         // session at home that speaks TLS, as the Mac's answer to its ask sets it (the mock never
         // asks: over it the overlay reads "…is showing a code now." as over a plain door).
@@ -101,6 +102,24 @@ enum MockCatalog {
         if let menus { client.showMockMenus(macMenus(menus)) }
         if let pointer { seedPointer(client, pointer, pencilPointer: pencilPointer) }
         return client
+    }
+
+    /// What the mock Mac's window list says about its lock screen (docs/lock-screen-plan.md). A Mac from
+    /// this build takes kind 44's "lock" (`lockScreen` 1) in every settings case but `legacy`, as it
+    /// takes the gestures. The arguments are ContentView's contract: `-SillLocked password|pin` (or any
+    /// other word, which reads as locked, asked for as "Password or PIN") locks it, `-SillUnlock 1`
+    /// has its list say this connection may unlock, `-SillLockCardHidden 1` starts with the card hidden
+    /// for this lock (the Settings panel's Unlock row brings it back), and `-SillLockOutcome` is what the
+    /// mock answers a request (StreamClient+LockScreen's `mockLockScreenAnswer`).
+    private static func seedLockScreen(_ client: StreamClient, settings c: SettingsCase) {
+        guard c != .legacy else { return }
+        let defaults = UserDefaults.standard
+        client.hostLockScreen = LockScreenRequest.generation
+        client.hostUnlock = defaults.bool(forKey: "SillUnlock") ? true : nil
+        guard let ask = defaults.string(forKey: "SillLocked"), !ask.isEmpty else { return }
+        client.hostLocked = ask
+        // After `hostLocked`, whose change starts the card over.
+        client.lockCardHidden = defaults.bool(forKey: "SillLockCardHidden")
     }
 
     /// `-SillPointer <state>`: the mock's pointer in one of the plan's states (see the harness's

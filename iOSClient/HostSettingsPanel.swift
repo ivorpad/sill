@@ -66,6 +66,16 @@ struct HostSettingsPanel: View {
         #endif
     }
     private static let gesturesGroupID = "thisDevice"
+    /// DEBUG `-SillSettingsScroll lock`: the rows start scrolled to the Lock Screen group, which
+    /// `-SillSettingsEnd` leaves above the view on a short screen.
+    private static var startsAtLock: Bool {
+        #if DEBUG
+        return UserDefaults.standard.string(forKey: "SillSettingsScroll") == "lock"
+        #else
+        return false
+        #endif
+    }
+    private static let lockGroupID = "lockScreen"
     /// `UIAccessibility.isVoiceOverRunning`; DEBUG `-SillVoiceOver 1` says it is, for the harness's
     /// photos of the group's VoiceOver footnote.
     static var voiceOverRunning: Bool {
@@ -86,7 +96,10 @@ struct HostSettingsPanel: View {
                         .scrollIndicatorsFlash(onAppear: true)
                         .scrollBounceBehavior(.basedOnSize)
                         .defaultScrollAnchor(Self.startsAtEnd ? .bottom : .top)
-                        .onAppear { if Self.startsAtGestures { reader.scrollTo(Self.gesturesGroupID, anchor: .top) } }
+                        .onAppear {
+                            if Self.startsAtGestures { reader.scrollTo(Self.gesturesGroupID, anchor: .top) }
+                            if Self.startsAtLock { reader.scrollTo(Self.lockGroupID, anchor: .top) }
+                        }
                 }
             }
             foot
@@ -112,6 +125,15 @@ struct HostSettingsPanel: View {
         .onChange(of: client.settingsProblem) { _, problem in
             if let problem { AccessibilityNotification.Announcement(problem).post() }
         }
+        // A lock that did not take, spoken as the row's footnote appears; and not kept for the next time
+        // the panel opens.
+        .onChange(of: lockLine) { _, line in
+            if let line { AccessibilityNotification.Announcement(line).post() }
+        }
+        .onDisappear { client.clearLockScreenAnswer(for: LockScreenAction.lock) }
+        #if DEBUG
+        .task { await pressLockRowFromLaunchArgument() }
+        #endif
         .task(id: client.connectedAt) {
             olderMac = false
             let elapsed = client.connectedAt.map { Date().timeIntervalSince($0) } ?? 0
@@ -295,6 +317,7 @@ struct HostSettingsPanel: View {
                     Footnote(text: "SillHost keeps these until it quits.")
                 }
                 awayFromHome
+                lockScreen
             } else if olderMac {
                 Label("Update Sill on \(mac) to change these from here.", systemImage: "arrow.down.circle")
                     .font(.body)
@@ -436,6 +459,75 @@ struct HostSettingsPanel: View {
             }
         }
     }
+
+    // MARK: Lock Screen
+
+    /// Lock ‹Mac›, or, while it is locked, the way back to the card that unlocks it
+    /// (docs/lock-screen-plan.md): for a Mac whose window list says it takes kind 44 "lock"
+    /// (`lockScreen`), none for an older one. While the Mac is unlocked the row sends the lock, and
+    /// under it a refusal or a lock that did not take, in the Mac's words; while it is locked the row
+    /// is the card's Hide undone. The footnote says what to expect after a lock.
+    @ViewBuilder private var lockScreen: some View {
+        if LockScreenPolicy.canLock(hostLockScreen: client.hostLockScreen) {
+            let locked = client.hostLocked != nil
+            let locking = client.lockScreenAttempt?.action == LockScreenAction.lock && client.lockScreenAttempt?.sending == true
+            Text("Lock Screen")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(Palette.muted)
+                .padding(.horizontal, 14)
+                .padding(.top, 6)
+                .padding(.bottom, 6)
+                .accessibilityAddTraits(.isHeader)
+                .id(Self.lockGroupID)
+                .onAppear { client.refreshSavedUnlock() }
+            Rows {
+                Button(action: { if locked { client.showLockCard() } else { client.sendLock() } }) {
+                    Text(LockScreenPolicy.rowTitle(mac: mac, locked: locked, locking: locking))
+                        .foregroundStyle(Palette.accent)
+                        .opacity(locking ? 0.4 : 1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(locking)
+                .accessibilityHint(locked ? "Opens the card that unlocks \(mac)." : "Locks \(mac)’s screen.")
+                .rowFrame()
+            }
+            if let line = lockLine {
+                Footnote(text: line, warning: true)
+            } else if locked {
+                Footnote(text: LockScreenPolicy.unlockRowFootnote(mac: mac, unlock: client.hostUnlock))
+            } else {
+                Footnote(text: LockScreenPolicy.lockFootnote(unlock: client.hostUnlock))
+            }
+            SavedUnlockRow(client: client, mac: mac)
+        }
+    }
+
+    /// What the last lock request ran into, in words (LockScreenPolicy.lockLine), or nil.
+    private var lockLine: String? {
+        LockScreenPolicy.lockLine(client.lockScreenAttempt, mac: mac)
+    }
+
+    #if DEBUG
+    /// DEBUG `-SillLockAfter <s>`: a stand-in for a tap on the Lock Screen row, which the simulator gates
+    /// do not have, once per launch, `s` seconds after the panel shows (LockedCard's `-SillUnlockAfter`
+    /// is its twin, and has the same guard: the mock, or a synthetic host on this Mac's loopback).
+    @MainActor private func pressLockRowFromLaunchArgument() async {
+        guard !Self.lockRowPressed, let raw = UserDefaults.standard.string(forKey: "SillLockAfter"),
+              let seconds = Double(raw), seconds >= 0 else { return }
+        Self.lockRowPressed = true
+        if let why = client.lockHarnessRefusal {
+            print("lock screen: harness: -SillLockAfter refused: \(why)")
+            return
+        }
+        try? await Task.sleep(for: .seconds(seconds))
+        guard !Task.isCancelled else { return }
+        print("lock screen: harness: the stand-in presses the Lock Screen row")
+        if client.hostLocked != nil { client.showLockCard() } else { client.sendLock() }
+    }
+    private static var lockRowPressed = false
+    #endif
 
     /// With Remote Access off on the Mac: how to reach it away from home.
     static func turnOnRemoteAccess(_ mac: String) -> String {
@@ -618,8 +710,8 @@ struct HostSettingsPanel: View {
 
 // MARK: - Rows
 
-/// An inset group of rows on the drawer's control colour.
-private struct Rows<Content: View>: View {
+/// An inset group of rows on the drawer's control colour (the lock screen's Forget row too: LockedCard.swift).
+struct Rows<Content: View>: View {
     let content: Content
     init(@ViewBuilder content: () -> Content) { self.content = content() }
     var body: some View {
@@ -756,7 +848,7 @@ private struct PendingSpinner: View {
 
 /// A group's footer: small, muted, from the leading edge; orange with a warning sign for a problem.
 /// `top` 0 continues the footer above it.
-private struct Footnote: View {
+struct Footnote: View {
     let text: String
     var warning = false
     var top: CGFloat = 6
@@ -817,7 +909,7 @@ private struct Callout: View {
     }
 }
 
-private extension View {
+extension View {
     /// A row inside a group: at least 44 pt tall, inset 14 pt.
     func rowFrame() -> some View {
         frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(.horizontal, 14)

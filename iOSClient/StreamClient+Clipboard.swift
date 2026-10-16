@@ -48,6 +48,13 @@ extension StreamClient {
         guard connected, (hostClipboard ?? 0) >= ClipboardItem.generation else { return }
         let board = UIPasteboard.general
         guard clipboardEcho.looked(at: board.changeCount) else { return }
+        // A copy made while the locked card shows is most likely the Mac's password, from a password
+        // manager: it is counted as seen and never read, so it is not sent to the Mac's clipboard (the
+        // device keeps nothing of it: docs/lock-screen-plan.md).
+        guard !lockCardShown else {
+            print("clipboard: a copy made while the locked card shows is not sent")
+            return
+        }
         // `hasStrings` and `hasImages` ask nothing of the person; reading the value is what iOS
         // asks about, and only happens for a copy that is new.
         let item: ClipboardItem?

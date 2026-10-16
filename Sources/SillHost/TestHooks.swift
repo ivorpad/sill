@@ -16,6 +16,9 @@ enum TestHooks {
         "SILL_TEST_CABLE_INTERFACE", "SILL_TEST_LOCKED", "SILL_TEST_ASK_FROM_THIS_MAC", "SILL_TEST_ASK_QUIET",
         // The device gate's (DeviceGate): a floor above "0" refuses devices.
         "SILL_TEST_MIN_DEVICE_VERSION", "SILL_TEST_GOODBYE",
+        // Locking and unlocking (UnlockTestHooks): a simulated console, what a dry attempt ends with.
+        "SILL_TEST_LOCK_ASK", "SILL_TEST_UNLOCK_OUTCOME", "SILL_TEST_UNLOCK_SECONDS", "SILL_TEST_LOCK_AGAIN_SECONDS",
+        "SILL_TEST_MAC_IDLE",
     ]
 
     /// One line for each such variable set on a host that does not honour them; nothing on a test

@@ -18,7 +18,7 @@ MUTANTS = [
     ("reconnect false by default (old goodbyes change)", "Remote.swift", "reconnect: Bool? = nil) {", "reconnect: Bool? = false) {"),
     ("protocol 1 by default", "Switcher.swift", "hostVersion: String? = nil, protocol: Int? = nil, gestures", "hostVersion: String? = nil, protocol: Int? = 1, gestures"),
     ("gestures 1 by default", "Switcher.swift", "hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,", "hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = 1,"),
-    ("deviceDisplay 1 by default", "Switcher.swift", "deviceDisplay: Int? = nil, deviceDisplayLive: Bool? = nil) {", "deviceDisplay: Int? = 1, deviceDisplayLive: Bool? = nil) {"),
+    ("deviceDisplay 1 by default", "Switcher.swift", "deviceDisplay: Int? = nil, deviceDisplayLive: Bool? = nil,", "deviceDisplay: Int? = 1, deviceDisplayLive: Bool? = nil,"),
     ("deviceDisplayLive never stored", "Switcher.swift", "self.deviceDisplayLive = deviceDisplayLive", "self.deviceDisplayLive = nil"),
     ("pixelScale 2 by default", "Viewport.swift", "pixelScale: Double? = nil, deviceDisplay: Bool? = nil) {", "pixelScale: Double? = 2, deviceDisplay: Bool? = nil) {"),
     ("the viewport's deviceDisplay never stored", "Viewport.swift", "self.pixelScale = pixelScale; self.deviceDisplay = deviceDisplay", "self.pixelScale = pixelScale; self.deviceDisplay = nil"),
@@ -26,7 +26,7 @@ MUTANTS = [
     ("fingers 3 by default", "Gesture.swift", "public init(gesture: String, fingers: Int? = nil) {", "public init(gesture: String, fingers: Int? = 3) {"),
     ("a name misspelt", "Gesture.swift", 'public static let swipeLeft = "swipeLeft"', 'public static let swipeLeft = "swipeleft"'),
     ("spread left out of the names", "Gesture.swift", "public static let names = [swipeUp, swipeDown, swipeLeft, swipeRight, pinch, spread]", "public static let names = [swipeUp, swipeDown, swipeLeft, swipeRight, pinch]"),
-    ("kind 28 as 29", "StreamMessage.swift", "case gesture = 28", "case gesture = 29"),
+    ("kind 28 as 30", "StreamMessage.swift", "case gesture = 28", "case gesture = 30"),
     ("device never nil", "Compatibility.swift", "self.appVersion = appVersion; self.build = build; self.protocol = `protocol`; self.device = device", "self.appVersion = appVersion; self.build = build; self.protocol = `protocol`; self.device = device ?? \"\""),
 ]
 caught = 0

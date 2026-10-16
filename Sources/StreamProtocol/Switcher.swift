@@ -63,14 +63,27 @@ public struct WindowList: Codable {
     /// The live Desktop is the display made for the device that receives this list. Nil or false:
     /// the Desktop, if it streams, is the Mac's own screen (or another device's display).
     public var deviceDisplayLive: Bool?
+    /// While this user's console is locked: what its lock screen asks for, `LockScreenAsk.password`
+    /// or `.pin` (a smart card paired for this user's login is in). Nil while unlocked, and from
+    /// every host before it. A device reads a value it does not know as locked
+    /// (docs/lock-screen-plan.md). Every connection gets it.
+    public var locked: String?
+    /// 1: this host takes kind 44 with `action` "lock" (LockScreen.swift). Nil from every host before
+    /// it, to which a device sends no kind 44.
+    public var lockScreen: Int?
+    /// True when this connection may send "unlock" (`UnlockPolicy.advertised`: the Mac's switches
+    /// for its route, at a TLS door). Nil otherwise, and from every host before it.
+    public var unlock: Bool?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil, clipboard: Int? = nil,
-                deviceDisplay: Int? = nil, deviceDisplayLive: Bool? = nil) {
+                deviceDisplay: Int? = nil, deviceDisplayLive: Bool? = nil,
+                locked: String? = nil, lockScreen: Int? = nil, unlock: Bool? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.clipboard = clipboard
         self.deviceDisplay = deviceDisplay; self.deviceDisplayLive = deviceDisplayLive
+        self.locked = locked; self.lockScreen = lockScreen; self.unlock = unlock
     }
 }
 

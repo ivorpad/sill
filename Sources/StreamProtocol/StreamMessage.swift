@@ -70,6 +70,12 @@ public enum StreamMessageKind: UInt8 {
     // The shared clipboard (Clipboard.swift). Older hosts and devices map it to `.unknown` and skip it.
     case clipboard = 29      // both ways: JSON ClipboardItem — a copy made on one side, for the other's
                              // clipboard. Device → host only to a host whose window list says `clipboard` 1
+    // Locking and unlocking the Mac (LockScreen.swift, docs/lock-screen-plan.md). 44 is this branch's
+    // number until it is agreed with upstream, whose main keeps 29 to 32 and whose open pull requests
+    // claim 29 to 43. Older hosts and devices map it to `.unknown` and skip it.
+    case lockScreen = 44     // both ways: JSON LockScreenRequest, device → host ("lock" only to a host whose
+                             // window list says `lockScreen` 1, "unlock" only on a connection whose list says
+                             // `unlock` true), and JSON LockScreenOutcome, host → device, one per request
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 

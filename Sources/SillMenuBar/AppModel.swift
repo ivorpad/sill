@@ -74,6 +74,8 @@ final class AppModel {
         // is up (up to a second or more), and -SillSetAfter counts from launch. Before `start()`
         // the checker only records it.
         settings.onUpdateCheckChange = { [settings, updates] in updates.setAutomatic(settings.updateCheck) }
+        // Permission to notify is asked for when "Unlock from devices" is turned on, not at launch.
+        settings.onUnlockSwitchedOn = { UnlockNotice.requestAuthorization() }
         presentation = StatusText.present(snapshot: HostStatusSnapshot(),
                                           permissions: PermissionState(screenRecording: true, accessibility: true),
                                           startupError: nil, hasCoordinator: false)
@@ -104,6 +106,8 @@ final class AppModel {
                                               hostVersion: SillVersion(Self.version) != nil ? Self.version : nil)
                 c.keepRunningOnListenerFailure()
                 coordinator = c
+                // An unlock from a device: a notification, as well as the log line.
+                c.onDeviceUnlocked = { device, route, at in UnlockNotice.post(device: device, route: route, at: at) }
                 // One path from the controls to the host, synchronous: the host's target equals
                 // settings.config at every main-actor turn, so a device's change and a menu click
                 // never undo each other.

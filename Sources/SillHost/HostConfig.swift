@@ -56,11 +56,26 @@ package struct HostConfig: Equatable, Sendable {
     /// DeviceSettings.accepted, `applying` and `restartNeeded`.
     package var shareClipboard: Bool
     package var shareClipboardAway: Bool
+    /// Unlock from devices (kind 44, docs/lock-screen-plan.md): a paired device may send its Mac's password
+    /// or PIN for Sill to type into the lock screen. Off until the Mac's user turns it on. It decides these
+    /// attempts only: typing at the lock screen by hand stays open to every paired device (the plan's
+    /// decision 2, "Keep today's typing"). `unlockAway` lets devices away from home (AwayPolicy.isAway) do
+    /// it too, and counts only with the first on. The Mac's alone, like the clipboard's switches: absent
+    /// from StreamSettings, HostSettingsChange, DeviceSettings.accepted, `applying` and `restartNeeded`.
+    /// Kept beside those in Sill.app's defaults, not with the trust list: they admit no new key, only let a
+    /// paired device have typed what it already knows.
+    package var unlockFromDevices: Bool
+    package var unlockAway: Bool
+    /// Lock again (decision 5): when the device whose attempt unlocked this Mac leaves and stays away for
+    /// `LockAgain.grace`, Sill locks the Mac again, unless the Mac's own keyboard or mouse was used since.
+    /// On by default; counts only for a Mac that Sill unlocked.
+    package var lockAgain: Bool
 
     /// Every knob is required, so the compiler finds each place that builds one when a knob is added.
     package init(maxFPS: Int, captureScale: CGFloat, bitrate: Int, awayBitrate: Int, awayCaptureScale: CGFloat,
                  prioritizeSpeed: Bool, virtualDisplay: Bool, directWireless: Bool, remoteAccess: Bool, remotePort: Int,
-                 internetAccess: Bool, requirePairing: Bool, shareClipboard: Bool, shareClipboardAway: Bool) {
+                 internetAccess: Bool, requirePairing: Bool, shareClipboard: Bool, shareClipboardAway: Bool,
+                 unlockFromDevices: Bool, unlockAway: Bool, lockAgain: Bool) {
         self.maxFPS = maxFPS
         self.captureScale = captureScale
         self.bitrate = bitrate
@@ -75,6 +90,9 @@ package struct HostConfig: Equatable, Sendable {
         self.requirePairing = requirePairing
         self.shareClipboard = shareClipboard
         self.shareClipboardAway = shareClipboardAway
+        self.unlockFromDevices = unlockFromDevices
+        self.unlockAway = unlockAway
+        self.lockAgain = lockAgain
     }
 
     /// The spike's knobs, formerly the `let`s at the top of the CLI's main.swift, and the app's
@@ -85,12 +103,14 @@ package struct HostConfig: Equatable, Sendable {
     /// Standard (Noah, 2026-09-25): a slow connection never starts at the home quality. Require
     /// pairing on: a home door that speaks TLS admits only paired devices until the Mac's user says
     /// otherwise. The shared clipboard off, at home and away (Noah, 2026-10-15): the Mac's user
-    /// turns it on.
+    /// turns it on. Unlock from devices off, at home and away, and lock again on (the lock-screen
+    /// plan's decisions 4 and 5).
     package static let standard = HostConfig(maxFPS: 120, captureScale: 2, bitrate: 15_000_000,
                                              awayBitrate: 4_000_000, awayCaptureScale: 1,
                                              prioritizeSpeed: false, virtualDisplay: false, directWireless: false,
                                              remoteAccess: false, remotePort: 7455, internetAccess: false,
-                                             requirePairing: true, shareClipboard: false, shareClipboardAway: false)
+                                             requirePairing: true, shareClipboard: false, shareClipboardAway: false,
+                                             unlockFromDevices: false, unlockAway: false, lockAgain: true)
 
     /// The remote door's port when none is set.
     package static let defaultRemotePort = 7455
@@ -114,7 +134,7 @@ package struct HostConfig: Equatable, Sendable {
     /// per 60 fps, Retina → points, away bitrate 4 → 15 Mbps per 60 fps, away points → Retina, speed
     /// off → on, virtual display off → on, direct wireless off → on, remote access off → on, remote
     /// port 7455 → 7460, internet access off → on, require pairing on → off, clipboard off → on,
-    /// clipboard away off → on".
+    /// clipboard away off → on, unlock from devices off → on, unlock away off → on, lock again on → off".
     package func changes(to new: HostConfig) -> String {
         func onOff(_ b: Bool) -> String { b ? "on" : "off" }
         func scaleName(_ s: CGFloat) -> String { s >= 1.5 ? "Retina" : "points" }
@@ -133,6 +153,9 @@ package struct HostConfig: Equatable, Sendable {
         if requirePairing != new.requirePairing { parts.append("require pairing \(onOff(requirePairing)) → \(onOff(new.requirePairing))") }
         if shareClipboard != new.shareClipboard { parts.append("clipboard \(onOff(shareClipboard)) → \(onOff(new.shareClipboard))") }
         if shareClipboardAway != new.shareClipboardAway { parts.append("clipboard away \(onOff(shareClipboardAway)) → \(onOff(new.shareClipboardAway))") }
+        if unlockFromDevices != new.unlockFromDevices { parts.append("unlock from devices \(onOff(unlockFromDevices)) → \(onOff(new.unlockFromDevices))") }
+        if unlockAway != new.unlockAway { parts.append("unlock away \(onOff(unlockAway)) → \(onOff(new.unlockAway))") }
+        if lockAgain != new.lockAgain { parts.append("lock again \(onOff(lockAgain)) → \(onOff(new.lockAgain))") }
         return parts.isEmpty ? "no change" : parts.joined(separator: ", ")
     }
 

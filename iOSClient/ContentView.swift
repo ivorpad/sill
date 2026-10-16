@@ -177,7 +177,7 @@ struct ContentView: View {
 ///   so a photo of a short screen shows the last groups (Direct Wireless, Away from home, This
 ///   iPad, Take the Tour). `-SillSettingsScroll gestures` starts them at the This iPad group
 ///   instead (its switch and rows, which the footnotes under them push out of the end's view on a
-///   short screen).
+///   short screen), and `-SillSettingsScroll lock` at the Lock Screen group above it.
 /// * `-SillSettingsCase <case>` — what the mock Mac's settings look like: `default` (Sill.app),
 ///   `cli`, `software`, `custom`, `vdproblem`, `vdstream`, `legacy`, `pending`, `timeout`,
 ///   `direct`, `directlink` (connected over it), `nodirect` (a host without it), `wired` or
@@ -210,6 +210,26 @@ struct ContentView: View {
 ///   session at home that speaks TLS, as the Mac's answer to the overlay's ask sets it
 ///   (DiscoveryPolicy.overlayLine; the mock never asks). Under `-SillLive 1` the overlay opens over
 ///   the live session as soon as it connects, and asks its Mac as Pair This iPad… does.
+/// * Locking and unlocking the Mac (docs/lock-screen-plan.md; LockedCard, StreamClient+LockScreen), in
+///   the mock: `-SillLocked password|pin` — the mock Mac is locked: its window list says what its lock
+///   screen asks for (`WindowList.locked`; any other word reads as locked, with the field "Password or
+///   PIN"), and the locked card covers the stream, the panel and the stream's keyboard put away.
+///   `-SillUnlock 1` — its list says this connection may unlock (`WindowList.unlock`): the card has the
+///   field and Unlock; without it the card says to unlock at the Mac. `-SillLockCardHidden 1` — starts
+///   with the card hidden for this lock, so the Settings panel's Unlock row shows (`-SillSettings 1`;
+///   unlocked, the panel has "Lock Mac mini": every settings case but `legacy` takes kind 44's "lock").
+///   `-SillLockOutcome stillLocked|refused|unlocked|notLocked|locked|silent` — what the mock answers a request
+///   0.4 s after it is sent: to an unlock `stillLocked` (the default), `refused` or `unlocked` (the
+///   mock unlocks); to a lock `locked` (the default: the mock locks), `notLocked` or `refused`;
+///   `silent` is never answered, and the card says so after 15 s. `-SillLockFocus 1` — the card's
+///   field has the keyboard as the card shows (a photo of it above the keyboard). `-SillUnlockAfter <s>`
+///   and `-SillLockAfter <s>` — stand-ins for a finger: `s` seconds after the card shows, a made-up string
+///   is put in its field and a second later Unlock is pressed; `s` seconds after the Settings panel
+///   shows, its Lock Screen row is pressed (Lock Mac mini, or Unlock Mac mini… while locked); each once
+///   per launch. Only in the mock, or against a synthetic host on this Mac's loopback (`-SillConnect`,
+///   InputScript's guard); never against Sill.app or a real Mac, whose lock screen they would type
+///   into. The console says "lock screen: …" at each step, and never a password, its length or its
+///   characters.
 /// * `-SillNoAutoDesktop 1` — (also in the normal app) the device never picks the Desktop by
 ///   itself: a live gate's session streams nothing, so no host encodes while it runs.
 /// * `-SillMacMenu <case>` — the mock Mac's menus (docs/menu-bar-plan.md §7.8; see

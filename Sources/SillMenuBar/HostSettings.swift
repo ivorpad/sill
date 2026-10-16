@@ -18,8 +18,9 @@ import SillHostCore
 /// save writes only the keys a change touched. Launch at login is not stored here: SMAppService
 /// is its source of truth (LoginItem.swift).
 ///
-/// Remote Access, its port, the internet switch and the shared clipboard's two switches are the
-/// Mac's alone: they come from here (the menu, the Settings panes, -SillSetAfter), never from a
+/// Remote Access, its port, the internet switch, the shared clipboard's two switches and the
+/// unlock switches (unlock from devices, also away from home, lock again) are the Mac's alone:
+/// they come from here (the menu, the Settings panes, -SillSetAfter), never from a
 /// device. The trust list, the keys and
 /// Require pairing never live here: any process of the same user can write these defaults
 /// (KeychainIdentityStore; docs/home-pairing-plan.md §6.5). `config.requirePairing` only carries
@@ -41,6 +42,7 @@ final class HostSettings {
         static let prioritizeSpeed = "prioritizeSpeed", virtualDisplay = "virtualDisplay", directWireless = "directWireless"
         static let remoteAccess = "remoteAccess", remotePort = "remotePort", internetAccess = "internetAccess"
         static let shareClipboard = "shareClipboard", shareClipboardAway = "shareClipboardAway"
+        static let unlockFromDevices = "unlockFromDevices", unlockAway = "unlockAway", lockAgain = "lockAgain"
         static let remoteAddressName = "remoteAddressName", remoteDevicesSeen = "remoteDevicesSeen"
         static let settingsTab = "settingsTab", permissionsOnboardingDismissed = "permissionsOnboardingDismissed"
         static let askedScreenRecording = "askedScreenRecording", askedAccessibility = "askedAccessibility"
@@ -57,6 +59,9 @@ final class HostSettings {
     }
     /// Called after `config` changed and was saved, on the main actor, before the assignment returns.
     @ObservationIgnored var onChange: (@MainActor () -> Void)?
+    /// "Unlock from devices" went from off to on (the Settings switch, a menu, -SillSetAfter): the app
+    /// then asks for permission to notify, which it does at no other time (UnlockNotice).
+    @ObservationIgnored var onUnlockSwitchedOn: (@MainActor () -> Void)?
 
     /// The Settings tab shown last, reopened next time.
     var settingsTab: SettingsTab { didSet { defaults.set(settingsTab.rawValue, forKey: Key.settingsTab) } }
@@ -113,6 +118,10 @@ final class HostSettings {
             // Off, at home and away: the Mac's user turns the shared clipboard on.
             Key.shareClipboard: standard.shareClipboard,
             Key.shareClipboardAway: standard.shareClipboardAway,
+            // Off, at home and away: the Mac's user turns unlocking from devices on. Lock again is on.
+            Key.unlockFromDevices: standard.unlockFromDevices,
+            Key.unlockAway: standard.unlockAway,
+            Key.lockAgain: standard.lockAgain,
             Key.remoteAddressName: "",
             Key.updateCheck: true,
         ])
@@ -132,7 +141,10 @@ final class HostSettings {
                             // the host starts, and to which the Devices pane saves it.
                             requirePairing: HostConfig.standard.requirePairing,
                             shareClipboard: defaults.bool(forKey: Key.shareClipboard),
-                            shareClipboardAway: defaults.bool(forKey: Key.shareClipboardAway)).validated()
+                            shareClipboardAway: defaults.bool(forKey: Key.shareClipboardAway),
+                            unlockFromDevices: defaults.bool(forKey: Key.unlockFromDevices),
+                            unlockAway: defaults.bool(forKey: Key.unlockAway),
+                            lockAgain: defaults.bool(forKey: Key.lockAgain)).validated()
         remoteAddressName = defaults.string(forKey: Key.remoteAddressName) ?? ""
         updateCheck = defaults.bool(forKey: Key.updateCheck)
         settingsTab = defaults.string(forKey: Key.settingsTab).flatMap(SettingsTab.init(rawValue:)) ?? .general
@@ -158,6 +170,12 @@ final class HostSettings {
         if config.internetAccess != old.internetAccess { defaults.set(config.internetAccess, forKey: Key.internetAccess) }
         if config.shareClipboard != old.shareClipboard { defaults.set(config.shareClipboard, forKey: Key.shareClipboard) }
         if config.shareClipboardAway != old.shareClipboardAway { defaults.set(config.shareClipboardAway, forKey: Key.shareClipboardAway) }
+        if config.unlockFromDevices != old.unlockFromDevices {
+            defaults.set(config.unlockFromDevices, forKey: Key.unlockFromDevices)
+            if config.unlockFromDevices { onUnlockSwitchedOn?() }
+        }
+        if config.unlockAway != old.unlockAway { defaults.set(config.unlockAway, forKey: Key.unlockAway) }
+        if config.lockAgain != old.lockAgain { defaults.set(config.lockAgain, forKey: Key.lockAgain) }
     }
 
     // MARK: Remote devices seen (display only)

@@ -33,10 +33,13 @@ final class InputInjector {
 
     /// `.hidSystemState` merges with the real HID state, so a modifier physically held on the Mac
     /// still applies to an injected click. Keyboard events below set their flags explicitly anyway.
-    private let source = CGEventSource(stateID: .hidSystemState)
+    /// Not private: ShieldTyping makes its events from it too (TextTyping).
+    let source = CGEventSource(stateID: .hidSystemState)
     private var lastMoveArrival: CFTimeInterval = 0   // jitter probe, see apply()
     private var left = ButtonState()
     private var right = ButtonState()
+    /// Tells the Mac a user is at it as input arrives, at most once a second (UserActivity).
+    private var userActivity = UserActivity()
 
     /// The Mac's pointer (docs/pointer-visibility-plan.md §4.5): told just before each post of a
     /// pointer or scroll event, never after. The network queue reads the pointer while this posts,
@@ -64,6 +67,9 @@ final class InputInjector {
     private var lastKeyFlags: UInt64 = 0
     /// Where the last pointer event went: a synthetic host's pointer, which it never reads.
     private var lastPointerLocation: CGPoint = .zero
+    /// When an event was last really posted (`CACurrentMediaTime`; never a dry run's), which lock again
+    /// reads against the Mac's HID idle time: Sill's own posts may reset it (LockAgainWatch).
+    private(set) var lastRealPostAt: CFTimeInterval = 0
 
     // MARK: Entry point
 
@@ -72,7 +78,7 @@ final class InputInjector {
     /// input with nowhere to land that still goes (`isUpOfSomethingDown`: StreamCoordinator), a
     /// button's up then going where the pointer is.
     func apply(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device) {
-        if !dryRun { remindAboutAccessibilityIfNeeded() }
+        if !dryRun { remindAboutAccessibilityIfNeeded(); userActivity.declare() }
         switch event {
         case .pointer(let action, let x, let y):
             // Jitter probe: how evenly do pointer moves arrive? A Pencil or trackpad drag should
@@ -115,17 +121,23 @@ final class InputInjector {
     }
 
     /// The one place an event reaches the Mac: posted, or in a dry run only counted. True when it
-    /// was posted.
-    private func post(_ event: CGEvent) -> Bool {
+    /// was posted. `logged` false: a dry run does not print it either (`postQuietly`).
+    private func post(_ event: CGEvent, logged: Bool = true) -> Bool {
         if Self.isKeyboard(event.type) { lastKeyFlags = event.flags.rawValue & (KeyStrokes.capsLock | Self.modifierBits) }
         if dryRun {
-            if testLog { logTest(event) }
+            if testLog && logged { logTest(event) }
             Stats.shared.bump("in.dry")
             return false
         }
+        lastRealPostAt = CACurrentMediaTime()
         event.post(tap: .cghidEventTap)
         return true
     }
+
+    /// ShieldTyping's post, which is `post` except that a dry run never prints the event (the TEST ONLY
+    /// log gives a key's code, and the codes of a password spell it). A real host counts nothing for it.
+    /// A dry attempt does not call it at all: it counts once (ShieldTyping).
+    func postQuietly(_ event: CGEvent) -> Bool { post(event, logged: false) }
 
     private static func isKeyboard(_ type: CGEventType) -> Bool { type == .keyDown || type == .keyUp || type == .flagsChanged }
 
@@ -420,37 +432,17 @@ final class InputInjector {
             case "\t": tap(virtualKey: 48)          // Tab
             case "\u{8}": tap(virtualKey: 51)       // Delete (backspace)
             default:
-                // The Unicode string carries the character whatever the Mac's keyboard layout is,
-                // which is what a software keyboard on the phone means; the keycode is the US key
-                // the character sits on (KeyStrokes.textKey), for apps that read keycodes, and 0
-                // for anything else.
-                let units = Array(character.utf16)
-                let key = KeyStrokes.textKey(for: character)
-                let virtualKey = CGKeyCode(key?.virtualKey ?? 0)
-                guard let down = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false) else { continue }
-                down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
-                up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
-                // No modifiers, explicitly: the character carries its own case, and an event made
-                // from this source after a ⌘Space (the Spotlight key) could otherwise inherit ⌘,
-                // which Spotlight's field ignores (typing into Spotlight did nothing, 2026-09-23).
-                // Never shift either, for a shifted character: a posted event leaves its flags in the
-                // HID state table the next click starts from (KeyStrokes); the string has the case.
-                down.flags = []
-                up.flags = []
-                _ = post(down)
-                _ = post(up)
+                // The Unicode events, as TextTyping makes them (shared with ShieldTyping).
+                guard let events = TextTyping.character(character, source: source) else { continue }
+                _ = post(events.down)
+                _ = post(events.up)
             }
             if !dryRun { Stats.shared.bump("in.text") }
         }
     }
 
     private func tap(virtualKey: CGKeyCode) {
-        for down in [true, false] {
-            guard let event = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: down) else { continue }
-            event.flags = []       // plain Return, Tab, Delete: never a leftover modifier
-            _ = post(event)
-        }
+        TextTyping.tap(virtualKey: virtualKey, source: source) { _ = post($0) }
     }
 
     // MARK: Keys
@@ -553,7 +545,7 @@ final class InputInjector {
     /// Spotlight key's ⌘ once reached the text typed after it (`type`). The shortcut acts on the key
     /// down. `checkModifiersLeft` says so in the log if the table still holds the chord's modifiers.
     func chord(keyCode: UInt16, flags: UInt64) {
-        if !dryRun { remindAboutAccessibilityIfNeeded() }
+        if !dryRun { remindAboutAccessibilityIfNeeded(); userActivity.declare() }
         let before = CGEventSource.flagsState(.hidSystemState).rawValue
         let strokes = KeyStrokes.chord(virtualKey: keyCode, flags: flags, before: before)
         // Both made before either is posted, so a key never goes down without its up.

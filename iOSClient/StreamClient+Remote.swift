@@ -173,7 +173,9 @@ extension StreamClient {
 
     /// Writes the list only (`recomputeMacs` itself writes what it learns of a Mac's door).
     func storeSavedMacs() {
-        if !savedMacsSeeded { UserDefaults.standard.set(SavedMacs.encode(savedMacs), forKey: SavedMacs.defaultsKey) }
+        guard !savedMacsSeeded else { return }
+        UserDefaults.standard.set(SavedMacs.encode(savedMacs), forKey: SavedMacs.defaultsKey)
+        pruneSavedUnlock()
     }
 
     /// Forget: the record only. The Mac lists this device until it is removed there, and the

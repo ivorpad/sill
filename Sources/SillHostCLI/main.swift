@@ -44,6 +44,19 @@ if config.shareClipboardAway && !config.shareClipboard {
     exit(2)
 }
 
+// `SillHost --unlock`: a paired device may type this Mac's password or PIN into its lock screen
+// (kind 44, docs/lock-screen-plan.md), as Settings › General's "Unlock from devices" does at home;
+// `--unlock-away` also from devices away from home. `--no-lock-again` leaves the Mac unlocked when
+// the device that unlocked it goes (by default it is locked again after 30 s). Off by default, like
+// the app's. Only a TLS door advertises it (--pairing, --remote): the plain door never does.
+config.unlockFromDevices = CommandLine.arguments.contains("--unlock")
+config.unlockAway = CommandLine.arguments.contains("--unlock-away")
+config.lockAgain = !CommandLine.arguments.contains("--no-lock-again")
+if config.unlockAway && !config.unlockFromDevices {
+    print("--unlock-away needs --unlock.")
+    exit(2)
+}
+
 // `SillHost --remote[=PORT]`: the remote door for this run (TLS 1.3, paired devices only), on
 // PORT or any free port, so it never collides with Sill.app's 7455. A new in-memory identity and
 // trust list every run. A pairing window is always open (a fresh one after each use or expiry);
@@ -77,6 +90,9 @@ if let remoteFlag {
 // both are given); a pairing window is always open, and its code goes to this process's stdout
 // only. Without it the home door stays plain and open, as it always was: a development host.
 let pairingFlag = CommandLine.arguments.contains("--pairing")
+if config.unlockFromDevices && !pairingFlag && remoteFlag == nil {
+    print("--unlock has no effect on the plain door, which never offers unlocking: add --pairing (or --remote).")
+}
 
 // `SillHost --print-reachability`: the addresses this Mac would give devices away from home, as
 // its Remote Access pane lists them, read once (read-only SystemConfiguration); then exits.

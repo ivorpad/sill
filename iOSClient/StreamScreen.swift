@@ -235,10 +235,19 @@ struct StreamScreen: View {
                 // A sibling in the same stack, not an `.overlay`: over the stream's UIKit input
                 // view, only a sibling drawn after it received the touches (measured on the
                 // simulator: an overlay's buttons were drawn but never tapped).
-                if overlayShown {
+                if pairingShown {
                     PairingOverlay(client: client, scannerMode: scannerOverride ?? CodeScanner.currentMode,
                                    close: { withAnimation(.easeOut(duration: 0.2)) { pairingOverlay = false } })
                 }
+                // The locked card (docs/lock-screen-plan.md), a sibling for the same reason. One site
+                // covers every layout: the portrait screen and the landscape one are both drawn in the
+                // group above. Under a pairing overlay that is open it waits, and comes back with it gone.
+                ZStack {
+                    if lockCardVisible {
+                        LockedCard(client: client)
+                    }
+                }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: lockCardVisible)
             }
             .coordinateSpace(.named(TourSpace.name))
             .onPreferenceChange(TourTargetsKey.self) { tourTargets = $0 }
@@ -262,6 +271,15 @@ struct StreamScreen: View {
         .onChange(of: client.pendingLink) { _, link in
             // An outside link while streaming: the panel and the keyboard go first, as for Pair This iPad….
             if link != nil { openLinkOverlay() }
+        }
+        // The Mac locks (or the Settings panel's Unlock row brings the card back): the panel and the
+        // keyboard go first. `initial`: on a session whose first list says the Mac is locked, the
+        // screen appears with the card already wanted.
+        .onChange(of: client.lockCardShown, initial: true) { _, wanted in lockCardChanged(wanted) }
+        // The Mac unlocked (here, or at the Mac): the card goes with the list, so VoiceOver is told.
+        .onChange(of: client.hostLocked) { was, now in
+            guard was != nil, now == nil, client.connected, !client.macName.isEmpty else { return }
+            AccessibilityNotification.Announcement("\(client.macName) is unlocked.").post()
         }
         .onChange(of: scenePhase) { _, phase in
             // A gesture cut short by a scene change never ends: put the transient UI away.
@@ -449,7 +467,30 @@ struct StreamScreen: View {
     private func closeWindowMenu() { windowMenu = nil }
 
     /// Pair This iPad…, or an outside link waiting for its confirmation.
-    private var overlayShown: Bool { pairingOverlay || client.pendingLink != nil }
+    private var pairingShown: Bool { pairingOverlay || client.pendingLink != nil }
+
+    /// The locked card is on screen: the Mac is locked and the person has not hidden it for this
+    /// lock. A pairing overlay that is open comes first.
+    private var lockCardVisible: Bool { client.lockCardShown && !pairingShown }
+
+    /// A card covers the stream: the pairing overlay or the locked card. Under either the layouts take
+    /// no touch, the tour waits and the link's line is gone.
+    private var overlayShown: Bool { pairingShown || lockCardVisible }
+
+    /// The Mac's lock screen is up and the card is wanted (`StreamClient.lockCardShown`, whether or not
+    /// a pairing overlay is over it), or no longer is. Coming, the panel, the drawer and the stream's
+    /// keyboard are put away first, as for the pairing overlay, so no key reaches the Mac while the
+    /// password is typed; and the stream's input view may not take the keyboard back while the card is
+    /// wanted, whatever later asks (a pull-down closing, the tour ending: `InputOverlayProxy.keysBlocked`).
+    /// Going, nothing comes back by itself: the keyboard has the Keyboard button, as after the pairing
+    /// overlay.
+    private func lockCardChanged(_ wanted: Bool) {
+        if wanted { putAwayForOverlay() }
+        overlay.keysBlocked = wanted
+        #if DEBUG
+        print("lock screen: the locked card " + (wanted ? "is wanted: the panel and the stream's keyboard put away, the keyboard blocked" : "is not wanted: the stream's keyboard may be taken again"))
+        #endif
+    }
 
     /// Pair This iPad…: the panel and the keyboard are put away first, so no key reaches the Mac
     /// while the code is typed, then the overlay covers the stream. What an earlier pairing left
@@ -562,7 +603,8 @@ struct StreamScreen: View {
         if windowMenu != nil { return "a window's lights were open" }
         if scaleOpen { return "the Aa ruler was open" }
         if keyboardShown { return "the keyboard was up" }
-        if overlayShown { return "the pairing overlay was open" }
+        if pairingShown { return "the pairing overlay was open" }
+        if lockCardVisible { return "the locked card was open" }
         // UIKit's word, not the scene phase: in a headless simulator the environment's scenePhase
         // stays inactive for an app that is active and on screen.
         if UIApplication.shared.applicationState != .active { return "the app was not active" }

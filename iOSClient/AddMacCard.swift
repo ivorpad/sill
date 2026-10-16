@@ -279,12 +279,15 @@ struct PairingField: View {
 /// An inline problem, orange, under the field it belongs to; VoiceOver announces it.
 struct ProblemLine: View {
     let text: String
+    /// Follows Dynamic Type (up to xxLarge) instead of the 13 pt the connect screen's cards keep: for a
+    /// card whose other words scale (LockedCard).
+    var scales = false
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill").accessibilityHidden(true)
             Text(text).fixedSize(horizontal: false, vertical: true)
         }
-        .font(.system(size: 13))
+        .font(scales ? Font.footnote : Font.system(size: 13))
         .foregroundStyle(Color.orange)
         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
         .accessibilityElement(children: .combine)

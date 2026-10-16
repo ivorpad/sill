@@ -49,7 +49,9 @@ extension HostConfig {
 /// counts as away, its bitrate and capture scale land on the away pair (`applyingAway`): the same
 /// whitelist decides both routes. Remote access, its port,
 /// internet access and the shared clipboard's switches can never enter this whitelist: they widen
-/// who reaches the Mac or what leaves it, and only the Mac's own user may do that.
+/// who reaches the Mac or what leaves it, and only the Mac's own user may do that. The unlock switches
+/// (unlock from devices, also away from home, lock again) are the same: whether a device may have its Mac's
+/// password typed into the lock screen is the Mac's user's to say.
 enum DeviceSettings {
     /// The fields of `c` a device may set: exactly the Mac menu's choices (`SettingsChoices`), and
     /// the virtual display on only where this host can run it (off is always allowed), and Direct

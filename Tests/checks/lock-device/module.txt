@@ -1,0 +1,4 @@
+# Compiled as one module by ../module.py, with main.swift: the device's lock screen rules and the protocol's
+# file they read (actions, outcomes, asks, the secret's limits, the Mac's waits). Nothing else is compiled.
+iOSClient/LockScreenPolicy.swift
+Sources/StreamProtocol/LockScreen.swift

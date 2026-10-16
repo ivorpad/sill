@@ -45,8 +45,7 @@ struct PairingOverlay: View {
                 // No tap gesture here: one on this backdrop took the taps meant for the buttons in
                 // front of it (measured on the simulator). What is under the overlay is not
                 // hit-testable anyway (StreamScreen), so a touch on the backdrop does nothing.
-                Color.black.opacity(0.85)
-                    .accessibilityHidden(true)
+                OverlayScrim()
                 Group {
                     if let link = client.pendingLink {
                         LinkConfirmation(link: link, pair: {
@@ -247,5 +246,15 @@ struct PairingOverlay: View {
             .foregroundStyle(Palette.accent)
             .frame(minHeight: 44)
             .keyboardShortcut(.cancelAction)
+    }
+}
+
+/// What a card over the stream dims it with (PairingOverlay, LockedCard): black at 85%, hidden from
+/// VoiceOver. The one place that value lives, so the two cards dim the layouts under them alike. It has
+/// no tap gesture, for the reason PairingOverlay gives.
+struct OverlayScrim: View {
+    var body: some View {
+        Color.black.opacity(0.85)
+            .accessibilityHidden(true)
     }
 }

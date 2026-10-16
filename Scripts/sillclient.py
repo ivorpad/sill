@@ -75,6 +75,17 @@ The Mac's pointer (kind 26; docs/pointer-visibility-plan.md):
                      --move, --tap, --key and --input go only to a --synthetic host on this Mac (the
                      process listening on PORT, by lsof and ps), which never posts input: anything
                      else exits 2
+The lock screen (kind 44; docs/lock-screen-plan.md). Tokens are shared with --set's: 1, 2, 3... in send
+order. Each kind 44 the host sends is printed as "lockScreen ← token=3 outcome=stillLocked message=- at
+8.412s" (the message in JSON quotes, or - when the host sent none), and the window list's locked, lockScreen
+and unlock as "lock: locked=password lockScreen=1 unlock=True at 1.234s", with the first list and again each
+time one of the three changes (- for a key the host left out). The secret is never printed, not in an error:
+  --unlock=SECRET@T  send kind 44 {"action":"unlock","secret":SECRET,"token":N} T seconds in (split on the
+                     last @; \n, \t, \xHH and \uXXXX escapes are decoded, as in --device, so a test can send
+                     a secret the host must refuse). Use a made-up secret: ps shows this command line
+  --lock@T           send kind 44 {"action":"lock","token":N} T seconds in
+                     --unlock and --lock go only to a --synthetic host on this Mac, as input does: any other
+                     host would type the secret into this Mac's lock screen, or lock this Mac (⌃⌘Q)
 The remote door (TLS 1.3, both keys pinned; PORT is the remote door's):
   --tls              a session (ALPN sill/1) with this client's identity, pinning the Mac's key saved by
                      an earlier pairing in --identity (or given with --pin)
@@ -123,7 +134,7 @@ with status 2 (--raw17 and --input go out as written). Find PORT with: lsof -nP 
 The --synthetic hosts do not advertise over Bonjour, so this is the only way to reach them."""
 import json, re, socket, struct, sys, time
 
-KIND = {0:"ps",1:"frame",2:"list",3:"thumb",4:"icon",5:"apps",11:"pong",13:"tick",14:"cursor",16:"settings",18:"macinfo",20:"pairresult",22:"goodbye",24:"menu",26:"pointer"}
+KIND = {0:"ps",1:"frame",2:"list",3:"thumb",4:"icon",5:"apps",11:"pong",13:"tick",14:"cursor",16:"settings",18:"macinfo",20:"pairresult",22:"goodbye",24:"menu",26:"pointer",44:"lockscreen"}
 BOOL = {"1": True, "0": False, "true": True, "false": False, "on": True, "off": False, "yes": True, "no": False}
 BOOL_KEYS = {"prioritizeSpeed", "virtualDisplay", "directWireless", "persistent", "virtualDisplayAvailable",
              "thisConnectionAway", "awayRunning"}
@@ -134,8 +145,10 @@ SET_KEYS = {"maxFPS", "bitrate", "captureScale", "prioritizeSpeed", "virtualDisp
 AWAY_KEYS = {"homeBitrate", "homeCaptureScale", "awayBitrate", "awayCaptureScale", "thisConnectionAway", "awayRunning"}
 EXPECT_KEYS = SET_KEYS | {"persistent", "virtualDisplayAvailable", "linkState"} | AWAY_KEYS
 TIMED = ("set", "raw17", "raw9","pick", "fps-after", "stop-ping", "stop-read", "pairing-wanted", "fetch", "press", "raw25", "raw27",
-         "move", "tap", "key", "input", "gesture", "raw28")
+         "move", "tap", "key", "input", "gesture", "raw28", "lock", "unlock")
 INPUT = ("move", "tap", "key", "input")
+# The lock screen's two sends (kind 44): an unlock types the secret into the Mac's lock screen, a lock posts ⌃⌘Q.
+LOCKS = ("lock", "unlock")
 # What --gesture may send: TrackpadGesture's six names (Gesture.swift). Anything else goes with --raw28.
 GESTURES = ("swipeUp", "swipeDown", "swipeLeft", "swipeRight", "pinch", "spread")
 VALUED = ("host", "device", "big-payload", "flood", "identity", "pair-url", "pair-code", "pin", "hello", "hello-delay", "then-code",
@@ -443,12 +456,21 @@ try:
     port = number(pos[0], "PORT"); dur = number(pos[1], "seconds", float) if len(pos) > 1 else 12
     sel = source(pos[2] if len(pos) > 2 else "desktop")
     for i, a in enumerate(flags):
-        bare = re.fullmatch(r"--(stop-ping|stop-read|pairing-wanted)@([^=]*)", a)     # timed flags without a value
+        bare = re.fullmatch(r"--(stop-ping|stop-read|pairing-wanted|lock)@([^=]*)", a)     # timed flags without a value
         name, _, body = (bare.group(1), "", "@" + bare.group(2)) if bare else a[2:].partition("=")
+        if name == "unlock":
+            # This flag's text is the secret: no message below may repeat it, a part of it or the flag.
+            secret, at, t = body.rpartition("@")
+            if not at: raise ValueError("--unlock=SECRET@T: no @T (seconds in); the flag is not repeated here, it holds the secret")
+            try: when = float(t)
+            except ValueError: raise ValueError("--unlock=SECRET@T: what follows the last @ is not a number of seconds") from None
+            if not 0 <= when < float("inf"): raise ValueError("--unlock=SECRET@T: T must be 0 or more")
+            events.append((when, i, name, None, unescape(secret)))
+            continue
         if name in TIMED:
             text, at, t = body.rpartition("@")
             if not at: raise ValueError(f"--{name}: no @T (seconds in) in {a!r}")
-            if name in ("stop-ping", "stop-read", "pairing-wanted") and text: raise ValueError(f"--{name}@T takes no value")
+            if name in ("stop-ping", "stop-read", "pairing-wanted", "lock") and text: raise ValueError(f"--{name}@T takes no value")
             if name in MENU_SENDS and not os.environ.get("SILL_TEST_MENU_PID"):
                 raise ValueError("--fetch and --press would open and choose the menus of whatever app this Mac has in front; "
                                  "run them against a host started with SILL_TEST_MENU_PID.")
@@ -473,7 +495,7 @@ try:
             if name in ("big-payload", "flood") and number(body, f"--{name}") < 1: raise ValueError(f"--{name} must be at least 1")
         elif a not in ("--junk", "--stats", "--tls", "--expect-tls-fail", "--menus", "--pointer", "--no-select", "--pair-ask",
                        "--pair-ask=cable", "--pair-cancel") and not a.startswith(("--fps=", "--expect=")):
-            raise ValueError(f"unknown flag {a!r}")
+            raise ValueError(f"unknown flag {a.partition('=')[0]!r}")   # the name only: a misspelt --unlock holds a secret
     events.sort(key=lambda e: (e[0], e[1]))
     expect = next((pairs(a[9:], EXPECT_KEYS, "--expect") for a in flags if a.startswith("--expect=")), None)
     fps_now = next((number(a[6:], "--fps") for a in flags if a.startswith("--fps=")), None)
@@ -530,6 +552,11 @@ try:
     if any(e[2] in ("gesture", "raw28") for e in events):
         if host not in ("127.0.0.1", "::1", "localhost") or not synthetic_listener(port):
             raise ValueError(f"--gesture and --raw28 only go to a --synthetic host on this Mac, which posts no gesture; nothing on port {port} is one.")
+    # A lock or an unlock likewise (docs/lock-screen-plan.md): a --synthetic host answers without typing or
+    # posting anything; any other host would type the secret into this Mac's lock screen, or lock this Mac.
+    if any(e[2] in LOCKS for e in events):
+        if host not in ("127.0.0.1", "::1", "localhost") or not synthetic_listener(port):
+            raise ValueError(f"--lock and --unlock only go to a --synthetic host on this Mac, which types and posts nothing; nothing on port {port} is one.")
 except ValueError as e:
     print(f"sillclient.py: {e}", file=sys.stderr); sys.exit(2)
 show_pointer = "--pointer" in flags
@@ -658,6 +685,7 @@ def describe(d):
 buf = b""; t0 = time.time(); last = t0; nextping = t0; nextstats = t0
 per = {}; tot = {}; frames = 0; keys = 0; kb = 0; kb_sec = 0; rtt = None; first_frame = None; ps_seen = []
 token = 2 if "--menus" in flags else 1; last_state = None; settings_msgs = 0
+last_lock = object()      # what the last window list said of locked, lockScreen and unlock; nothing yet differs from any list
 # The Mac's menus: the last top level (its version and titles), every title an answer listed by id,
 # and what each token asked for (a fetch's id, a press's id).
 menu_version = None; menu_top = None; menu_titles = {}; menu_asked = {1: ("menus", None)} if "--menus" in flags else {}
@@ -722,6 +750,12 @@ def fire(e, now):
         s.sendall(msg(28, json.dumps(parsed).encode())); print(f"  sent gesture {json.dumps(parsed)} at {at}")
     elif name == "raw28":
         s.sendall(msg(28, text.encode())); print(f"  sent raw kind 28 {text} at {at}")
+    elif name == "unlock":
+        request = {"action": "unlock", "secret": parsed, "token": token}; token += 1
+        s.sendall(msg(44, json.dumps(request).encode())); print(f"  sent unlock (token {token - 1}) at {at}")     # never the secret
+    elif name == "lock":
+        request = {"action": "lock", "token": token}; token += 1
+        s.sendall(msg(44, json.dumps(request).encode())); print(f"  sent lock (token {token - 1}) at {at}")
 while time.time() - t0 < dur:
     now = time.time()
     while events and now - t0 >= events[0][0]:
@@ -769,6 +803,11 @@ while time.time() - t0 < dur:
             d = json.loads(payload)
             dd = "".join(f" {k}={d[k]}" for k in ("deviceDisplay", "deviceDisplayLive") if k in d)
             print(f"  windowList: {len(d.get('windows', []))} windows, active={d.get('active')}{dd}")
+            lock_now = (d.get("locked"), d.get("lockScreen"), d.get("unlock"))
+            if lock_now != last_lock:
+                last_lock = lock_now
+                lw, ls, lu = ("-" if v is None else v for v in lock_now)
+                print(f"  lock: locked={lw} lockScreen={ls} unlock={lu} at {time.time()-t0:.3f}s")
         elif kind == 18:
             ok, i = verify_macinfo(payload, mac_pin)
             addrs = ",".join(f"{a['host']}{':' + str(a['port']) if a.get('port') else ''}/{a['kind']}/{a['via']}" for a in i.get("addresses", []))
@@ -784,6 +823,14 @@ while time.time() - t0 < dur:
             where = (f"x={d['x']:.4f} y={d['y']:.4f} inside=1" if d.get("inside") and isinstance(d.get("x"), (int, float))
                      and isinstance(d.get("y"), (int, float)) else "inside=0")
             print(f"  pointer at {time.time()-t0:.3f}s {where} seen={d.get('seen') or 0}")
+        elif kind == 44:
+            try:
+                d = json.loads(payload)
+                if not isinstance(d, dict): raise ValueError("not an object")
+            except ValueError:
+                print(f"  lockScreen ← undecodable payload of {ln} bytes at {time.time()-t0:.3f}s"); continue    # never the bytes: a host could repeat a request
+            words = "-" if d.get("message") is None else json.dumps(d["message"], ensure_ascii=False)
+            print(f"  lockScreen ← token={d.get('token')} outcome={d.get('outcome')} message={words} at {time.time()-t0:.3f}s")
         elif kind == 22:
             g = json.loads(payload)
             extra = "".join(f"; {k}: {json.dumps(g[k], ensure_ascii=False)}" for k in ("message", "minimumVersion", "reconnect") if k in g)

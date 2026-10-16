@@ -675,7 +675,13 @@ final class InputOverlayView: UIView, UIKeyInput {
 
     // MARK: - Keyboard
 
-    override var canBecomeFirstResponder: Bool { true }
+    /// Asked each time the view is offered the keyboard: true while the locked card is up
+    /// (`InputOverlayProxy.keysBlocked`), when the password it takes must not also go to the Mac as
+    /// text. Whatever asks (the Keyboard button, a panel or pull-down closing, the tour's end), the
+    /// view stays out of the responder chain, so it hears no `insertText` and no hardware key.
+    var keysBlocked: () -> Bool = { false }
+
+    override var canBecomeFirstResponder: Bool { !keysBlocked() }
 
     /// None of iPadOS's three-finger editing gestures (undo and redo, copy, cut and paste, the edit
     /// bar): three fingers here are the Mac's (docs/trackpad-gestures-plan.md §6.5). This view is the
@@ -824,6 +830,10 @@ final class InputOverlayView: UIView, UIKeyInput {
 /// Lets SwiftUI reach the overlay's first responder from the top bar's Keyboard button.
 final class InputOverlayProxy {
     weak var view: InputOverlayView?
+    /// The locked card is up (StreamScreen): the view takes no keyboard, whoever asks, so a password
+    /// typed into the card's field cannot also be typed on the Mac. Kept here, not on the view, which a
+    /// rotation replaces. Set after the keyboard has been put away, and cleared when the card goes.
+    var keysBlocked = false
     func toggleKeyboard() { view?.toggleKeyboard() }
     /// Takes the keyboard down or puts it back, and with it hardware-key forwarding to the Mac: the
     /// overlay forwards keys only while it is first responder. The Settings panel takes it down
@@ -858,6 +868,7 @@ struct InputOverlay: UIViewRepresentable {
 
     func makeUIView(context: Context) -> InputOverlayView {
         let view = InputOverlayView(frame: .zero)
+        view.keysBlocked = { [weak proxy] in proxy?.keysBlocked ?? false }
         proxy.view = view
         return view
     }

@@ -146,6 +146,18 @@ private struct GeneralPane: View {
             } footer: {
                 Footnote("Text or an image you copy on this Mac can be pasted on a connected iPhone or iPad, and the other way round. What you copied before turning this on isn’t shared, and a copy that arrives from the other side is cleared from its clipboard after 2 minutes. Copies a password manager marks as private stay on this Mac. Away from home means connected through Remote Access from a VPN or the internet.")
             }
+            // Unlocking this Mac from a device (kind 44, UnlockPolicy): off until turned on here, and away
+            // from home only with the second switch too. Lock again follows the first. Applies at once,
+            // without a restart.
+            Section {
+                Toggle("Unlock from devices", isOn: $settings.config.unlockFromDevices)
+                Toggle("Also from devices away from home", isOn: $settings.config.unlockAway)
+                    .disabled(!settings.config.unlockFromDevices)
+                Toggle("Lock again when the device that unlocked it leaves", isOn: $settings.config.lockAgain)
+                    .disabled(!settings.config.unlockFromDevices)
+            } footer: {
+                Footnote("A paired iPhone or iPad can unlock this Mac when it is locked. The password is typed on the device, and Sill types it into the lock screen without keeping it. Turned off, a device can’t use its unlock card, but it can still type into the lock screen by hand. Lock again puts the lock back \(Int(LockAgain.grace)) seconds after the device that unlocked this Mac leaves, unless you used this Mac meanwhile. Away from home means connected through Remote Access from a VPN or the internet.")
+            }
             if let preview = previewUpdates {
                 UpdatesSection(pane: preview, automatic: .constant(true))
             } else {
