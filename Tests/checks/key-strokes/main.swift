@@ -1320,5 +1320,77 @@ do {
     check(all == 95, "every printable ASCII character has a key: \(all) of 95")
 }
 
+// MARK: Caps Lock as Escape (CapsLockEscape and ForwardedKeys.capsLockEscape: This iPad's switch)
+
+let uCaps: UInt16 = 0x39, uA: UInt16 = 0x04, uTwo: UInt16 = 0x1F
+do {
+    // Off, as before: Caps Lock is the text system's, and a key carries iPadOS's caps lock.
+    var off = ForwardedKeys()
+    check(off.began(uCaps, modifiers: capsLock) == nil && off.ended(uCaps) == nil, "off: Caps Lock is the text system's, down and up")
+    check(off.began(uLeft, modifiers: capsLock) == key(uLeft, true, capsLock), "off: ← carries caps lock")
+    // On: Caps Lock goes as Escape, down and up, and nothing carries caps lock.
+    var on = ForwardedKeys()
+    on.capsLockEscape = true
+    check(on.began(uCaps, modifiers: capsLock) == key(uEsc, true, 0), "on: Caps Lock's down is Escape's, without caps lock")
+    check(on.down == [uEsc], "on: Escape is what is down on the Mac, not Caps Lock")
+    check(on.ended(uCaps) == key(uEsc, false, 0) && on.down.isEmpty, "on: Caps Lock's up is Escape's, and nothing is left down")
+    check(on.began(uLeft, modifiers: capsLock | shift) == key(uLeft, true, shift), "on: ⇧← keeps shift and drops caps lock")
+    _ = on.ended(uLeft)
+    check(on.began(uS, modifiers: capsLock | command) == key(uS, true, command), "on: ⌘S goes without caps lock")
+    _ = on.ended(uS)
+    check(on.began(uEsc, modifiers: 0) == key(uEsc, true, 0) && on.ended(uEsc) == key(uEsc, false, 0), "on: Escape itself is still Escape")
+    // The switch turned off while Caps Lock is held: its up is still Escape's.
+    _ = on.began(uCaps, modifiers: 0)
+    on.capsLockEscape = false
+    check(on.ended(uCaps) == key(uEsc, false, 0) && on.down.isEmpty, "the switch turned off mid-press: the up is still Escape's")
+    // Leaving with Caps Lock held: Escape comes up, and a late Caps Lock up is nobody's, even with the
+    // real Escape held since.
+    var leaving = ForwardedKeys()
+    leaving.capsLockEscape = true
+    _ = leaving.began(uCaps, modifiers: 0)
+    check(leaving.releaseAll() == [key(uEsc, false, 0)], "leaving: Escape comes up")
+    _ = leaving.began(uEsc, modifiers: 0)
+    check(leaving.ended(uCaps) == nil && leaving.down == [uEsc], "a late Caps Lock up leaves the real Escape down")
+}
+// What the text system typed, for a key pressed while iPadOS's caps lock was on.
+do {
+    var on = ForwardedKeys()
+    on.capsLockEscape = true
+    check(on.began(uA, modifiers: capsLock) == nil, "a letter is the text system's")
+    check(on.typed("A") == "a", "on: a letter typed with caps lock on is lower case")
+    _ = on.ended(uA)
+    _ = on.began(uA, modifiers: capsLock | shift)
+    check(on.typed("a") == "A", "on: with caps lock and shift, upper case, whatever iPadOS made of them")
+    _ = on.ended(uA)
+    _ = on.began(uA, modifiers: shift)
+    check(on.typed("A") == "A", "on: shift alone, as typed")
+    _ = on.ended(uA)
+    _ = on.began(uA, modifiers: 0)
+    check(on.typed("A") == "A", "on: no caps lock, as typed")
+    _ = on.ended(uA)
+    _ = on.began(uA, modifiers: capsLock)
+    check(on.typed("AB") == "AB", "on: more than one character is left as it is")
+    check(on.typed("B") == "B", "on: the key's flags are spent by one text")
+    _ = on.began(uA, modifiers: capsLock)
+    _ = on.ended(uA)
+    check(on.typed("C") == "C", "on: and by its up, so dictation after it is left as it is")
+    _ = on.began(uTwo, modifiers: capsLock)
+    check(on.typed("2") == "2", "on: a digit has no case")
+    _ = on.ended(uTwo)
+    check(on.typed("D") == "D", "on: no key pressed (the software keyboard): as typed")
+    var off = ForwardedKeys()
+    _ = off.began(uA, modifiers: capsLock)
+    check(off.typed("A") == "A", "off: caps lock's A stays A")
+}
+check(CapsLockEscape.usage(uCaps, on: true) == uEsc && CapsLockEscape.usage(uCaps, on: false) == uCaps
+      && CapsLockEscape.usage(uA, on: true) == uA, "only Caps Lock is remapped, and only when on")
+check(CapsLockEscape.modifiers(capsLock | command, on: true) == command && CapsLockEscape.modifiers(capsLock, on: false) == capsLock,
+      "caps lock's flag is dropped only when on")
+check(CapsLockEscape.capsLockFlag == capsLock, "iPadOS's caps lock is the Mac's caps lock bit")
+check(CapsLockEscape.defaultsKey == "Sill.capsLockEscape" && CapsLockEscape.title == "Caps Lock as Escape", "the setting's key and title")
+check(CapsLockEscape.footnote(mac: "Mac mini", device: "iPad")
+      == "Caps Lock on a keyboard connected to this iPad sends Esc to Mac mini, and letters type as if Caps Lock were off. iPadOS’s own Modifier Keys setting (Settings › General › Keyboard › Hardware Keyboard) does this in every app.",
+      "the footnote")
+
 print(failures == 0 ? "ok: \(checks) checks" : "FAILED: \(failures) of \(checks) checks")
 exit(failures == 0 ? 0 : 1)

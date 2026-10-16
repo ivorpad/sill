@@ -199,7 +199,9 @@ the table on the iPad.
   two-finger scroll does not reach Sill either. Both pans leave `allowedScrollTypesMask` at 0 (read
   in the rig), so trackpad and wheel scrolling make no pan callbacks; its pointer (hover) and its
   clicks (indirect touches, `InputOverlay.swift:223-269`) do reach Sill. Unchanged here; a later
-  change could set `.continuous`.
+  change could set `.continuous`. **Done 2026-10-16:** a third pan on the stream, scroll events only
+  (`allowedTouchTypes` empty, `allowedScrollTypesMask = .continuous`), feeds the glass's `handlePan`,
+  so the trackpad scrolls at the pointer with the same phases and coast. The wheel stays out.
 - `INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES` (`project.pbxproj:382,414`).
 - A finger that lands on the bottom edge starts the Home indicator's gesture, as it does for any
   stroke today.

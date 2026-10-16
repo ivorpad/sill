@@ -581,6 +581,10 @@ struct HostSettingsPanel: View {
             }
         }
         Footnote(text: gesturesFooter)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            KeyboardAlwaysOnRow(mac: mac)
+            CapsLockEscapeRow(mac: mac)
+        }
     }
 
     /// The Mac's window list said it offers a display for the device (`WindowList.deviceDisplay`).

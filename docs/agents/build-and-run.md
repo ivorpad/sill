@@ -315,7 +315,11 @@ scrolled to its end), `-SillSettingsScroll gestures|lock` (the panel scrolled to
 its This iPad group, or to the Lock Screen group above it; the mock Mac takes
 gestures in every case but `legacy`),
 `-Sill.trackpadGestures 0` (the device's Three-Finger Gestures off for one run,
-in the normal app too), `-SillVoiceOver 1` (that group as with VoiceOver on:
+in the normal app too), `-Sill.capsLockEscape 1` (an iPad's Caps Lock as Escape
+on for one run; with `-SillSettings 1 -SillSettingsEnd 1` the panel shows its
+switch), `-Sill.keyboardAlwaysOn 1` (Keyboard Always On for one run; the console
+says "keyboard: Keyboard Always On, the stream takes the keyboard" each time it
+does; a simulator's GCKeyboard is there even when its on-screen keyboard shows), `-SillVoiceOver 1` (that group as with VoiceOver on:
 its footnote says the rows do the gestures), `-SillScanOverlay 1` (Pair This
 iPad…'s overlay; `-SillOverlayLine asking|shown|openonmac|locked|noanswer` the
 line its ask's answer sets; under `-SillLive 1` it opens over the live session

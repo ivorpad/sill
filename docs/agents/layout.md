@@ -502,7 +502,9 @@
   region as a screen's own GeometryReader sees it; StreamScreen hands it to
   its layouts as `\.duoFold` and hides the status bar with `duoStatusBar`;
   AB02/FB02),
-  `InputOverlay` (direct touch, Pencil, keyboard, scroll momentum; each input
+  `InputOverlay` (direct touch, Pencil, keyboard, scroll momentum; a
+  trackpad's two-finger scroll through a pan of its own, scroll events only
+  (`.continuous`, no wheel), into the glass's scroll at the pointer; each input
   says what drew this device's pointer; hardware keys through `ForwardedKeys`,
   let go when the overlay stops taking keys; `InputOverlayProxy.keysBlocked`,
   set by StreamScreen while the locked card is wanted: the view then takes no
@@ -510,8 +512,18 @@
   `KeyChords` (`KeyModifiers`; a
   shortcut with its modifiers' own keys pressed around it, the Spotlight key's
   ⌘Space, the trackpad's modifier keys around a click; `ForwardedKeys`, a
-  hardware key's up after its down; pure, `Tests/checks/key-strokes` with the
-  host's KeyStrokes), `TrackpadView` (the relative pad: its
+  hardware key's up after its down; `CapsLockEscape`, This iPad's Caps Lock as
+  Escape: the key, iPadOS's caps lock left out of every key's flags and every
+  letter's case; pure, `Tests/checks/key-strokes` with the host's KeyStrokes),
+  `CapsLockEscapeRow` (that switch and its footnote, on an iPad only, kept in
+  `Sill.capsLockEscape`; pbxproj AD06/FD06), `KeyboardAlwaysOn` (This iPad's
+  Keyboard Always On, `Sill.keyboardAlwaysOn`: while a keyboard is connected
+  (GCKeyboard) the stream takes the keyboard whenever the Settings panel, the
+  drawer, the locked card, the pairing overlay and the tour are all closed, and
+  a keyboard that goes takes it down; `KeyboardAlwaysOnRow`, and
+  `KeyboardAlwaysOnHooks`, StreamScreen's one modifier for it; pbxproj
+  AD09/FD09), `TextScaleControl` (the Aa control, moved whole out of
+  StreamScreen.swift on 2026-10-16; pbxproj AD08/FD08), `TrackpadView` (the relative pad: its
   cursor a `PadCursor`, from the anchor; a recognizer that only counts fingers;
   `verticalSpan`, a phone's width ÷ 1.6, and the DEBUG input test),
   `HEVCDisplayView` (shared display view, the one pointer sprite + DEBUG HUD),
@@ -582,9 +594,10 @@
   pad's cursor; pure, `Tests/checks/pointer-presence`; pbxproj A301/F301),
   `TrackpadGestures` (which stroke on the glass goes silent and which arms,
   the gesture decided as one of its three fingers lifts, and whether it goes
-  to the Mac; pure, `Tests/checks/gestures`; pbxproj A701/F701) and, in
-  InputOverlay.swift, `StrokeObserver` (the recognizer on both surfaces that
-  feeds it every direct touch and takes none). The
+  to the Mac; pure, `Tests/checks/gestures`; pbxproj A701/F701) and
+  `StrokeObserver` (the recognizer on both surfaces that feeds it every direct
+  touch and takes none; moved whole out of InputOverlay.swift on 2026-10-16;
+  pbxproj AD07/FD07). The
   first-run tour: `TourPolicy` (its steps and targets per layout, the halves,
   a phone's rows and sideways; when it shows by itself, what it remembers,
   what a session decided and the reconnect's, a rotation mid-run, the crease,

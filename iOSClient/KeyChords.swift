@@ -100,6 +100,13 @@ enum KeyChord {
 struct ForwardedKeys {
     /// The keys whose down went to the Mac and whose up has not, in the order they went down.
     private(set) var down: [UInt16] = []
+    /// Caps Lock as Escape (CapsLockEscape): the overlay sets it from the device's setting at each press.
+    var capsLockEscape = false
+    /// A key whose down went to the Mac as another key (Caps Lock as Escape): its up goes as that one,
+    /// whatever the setting says by then.
+    private var sentAs: [UInt16: UInt16] = [:]
+    /// The flags UIKit gave the last key the text system took, until its up: what `typed` reads.
+    private var textFlags: UInt64?
 
     /// The keys the text system never delivers, which go to the Mac as keys whatever is held: the
     /// arrows, escape, forward delete, home, end, page up and down, F1 to F12, and ⌘, ⌃ and ⌥
@@ -120,21 +127,32 @@ struct ForwardedKeys {
     }
 
     /// A key pressed, with the modifier flags UIKit gives it: its down, when it goes to the Mac as a
-    /// key; nil when the text system takes it.
+    /// key; nil when the text system takes it. With Caps Lock as Escape on, Caps Lock goes as Escape
+    /// and no key carries iPadOS's caps lock (CapsLockEscape).
     mutating func began(_ usage: UInt16, modifiers: UInt64) -> InputEvent? {
-        guard Self.goesAsKey(usage, modifiers: modifiers) else { return nil }
-        if !down.contains(usage) { down.append(usage) }
-        let isModifier = KeyModifiers.flag(forKey: usage) != nil
-        return .key(hidUsage: usage, down: true, modifiers: isModifier ? held : modifiers)
+        let sent = CapsLockEscape.usage(usage, on: capsLockEscape)
+        let flags = CapsLockEscape.modifiers(modifiers, on: capsLockEscape)
+        guard Self.goesAsKey(sent, modifiers: flags) else {
+            textFlags = modifiers
+            return nil
+        }
+        if sent != usage { sentAs[usage] = sent }
+        if !down.contains(sent) { down.append(sent) }
+        let isModifier = KeyModifiers.flag(forKey: sent) != nil
+        return .key(hidUsage: sent, down: true, modifiers: isModifier ? held : flags)
     }
 
     /// A key released, or its press cancelled (the app going to the background, the keyboard gone):
     /// its up, when its down went to the Mac, with the modifier keys still down there; nil when the
     /// text system had it.
     mutating func ended(_ usage: UInt16) -> InputEvent? {
-        guard let i = down.firstIndex(of: usage) else { return nil }
+        let sent = sentAs.removeValue(forKey: usage) ?? usage
+        guard let i = down.firstIndex(of: sent) else {
+            textFlags = nil
+            return nil
+        }
         down.remove(at: i)
-        return .key(hidUsage: usage, down: false, modifiers: held)
+        return .key(hidUsage: sent, down: false, modifiers: held)
     }
 
     /// Every key still down on the Mac going up, the last pressed first, each with the modifier keys
@@ -143,9 +161,53 @@ struct ForwardedKeys {
     mutating func releaseAll() -> [InputEvent] {
         var ups: [InputEvent] = []
         while let usage = down.last, let up = ended(usage) { ups.append(up) }
+        sentAs = [:]
         return ups
+    }
+
+    /// What the text system typed (the overlay's insertText), as it goes to the Mac: with Caps Lock
+    /// as Escape on, a letter from a hardware key pressed while iPadOS's caps lock was on is as it
+    /// would be with caps lock off (CapsLockEscape.text). That key's flags are spent.
+    mutating func typed(_ text: String) -> String {
+        defer { textFlags = nil }
+        return CapsLockEscape.text(text, pressFlags: textFlags, on: capsLockEscape)
     }
 
     /// The modifier flags of the modifier keys down on the Mac.
     private var held: UInt64 { down.reduce(0) { $0 | (KeyModifiers.flag(forKey: $1)?.rawValue ?? 0) } }
+}
+
+/// Caps Lock as Escape: the Settings panel's switch under This iPad (CapsLockEscapeRow), kept on this
+/// device in `Sill.capsLockEscape`, off until turned on. A hardware keyboard's Caps Lock then goes to the
+/// Mac as Escape. iPadOS keeps its own caps lock below the app and may still turn it on with that key,
+/// so while this is on that state goes into nothing sent: not into a key's flags, not into a letter's
+/// case. iPadOS's own Modifier Keys setting does the same for every app, without the state.
+enum CapsLockEscape {
+    static let defaultsKey = "Sill.capsLockEscape"
+    static let capsLock: UInt16 = 0x39
+    static let escape: UInt16 = 0x29
+    /// UIKeyModifierFlags.alphaShift, which the Mac posts as caps lock (KeyStrokes.capsLock).
+    static let capsLockFlag: UInt64 = 1 << 16
+
+    /// The key a hardware key goes to the Mac as.
+    static func usage(_ usage: UInt16, on: Bool) -> UInt16 { on && usage == capsLock ? escape : usage }
+
+    /// The flags a hardware key carries to the Mac.
+    static func modifiers(_ modifiers: UInt64, on: Bool) -> UInt64 { on ? modifiers & ~capsLockFlag : modifiers }
+
+    /// One character the text system typed for a hardware key pressed with `pressFlags`: with caps lock
+    /// on there, as it would be with caps lock off, upper case with shift held and lower case without
+    /// (a digit or a symbol has no case to change). Any other text (more than one character, no key
+    /// pressed: the software keyboard, dictation) is left as it is.
+    static func text(_ text: String, pressFlags: UInt64?, on: Bool) -> String {
+        guard on, let flags = pressFlags, flags & capsLockFlag != 0, text.count == 1 else { return text }
+        return flags & KeyModifiers.shift.rawValue != 0 ? text.uppercased() : text.lowercased()
+    }
+
+    static let title = "Caps Lock as Escape"
+
+    static func footnote(mac: String, device: String) -> String {
+        "Caps Lock on a keyboard connected to this \(device) sends Esc to \(mac), and letters type as if Caps Lock were off. "
+            + "iPadOS’s own Modifier Keys setting (Settings › General › Keyboard › Hardware Keyboard) does this in every app."
+    }
 }
