@@ -28,7 +28,7 @@ Pipeline: `SCStream (420f) → VTCompressionSession (HEVC, real time, no B-frame
   disk image's background and the App Store screenshots (see its README).
   `docs/`: the brief and the plans.
 
-`CLAUDE.md`, Layout, goes through the code file by file.
+`docs/agents/layout.md` goes through the code file by file.
 
 ## Build and run
 
@@ -565,7 +565,7 @@ Mac's row has Forget in its menu (touch and hold).
 
 ## Test tools
 
-None of these needs a device. `CLAUDE.md`, Build and run, has the complete
+None of these needs a device. `docs/agents/build-and-run.md` has the complete
 list, with the test-only environment variables and the recipes for headless
 tests of Direct Wireless Connection and remote access.
 
@@ -738,7 +738,7 @@ simulator:
   registered under that type are rows), `-SillHomeDoor paired|open|plain`
   (what a `-SillConnect` address counts as), `-SillCableTest 1` (this
   device's path counts as the cable) and the connect screen's `home…` cases;
-  `CLAUDE.md`, Build and run, has them all.
+  `docs/agents/build-and-run.md` has them all.
 - `-Sill.trackpadGestures 0` turns the device's Three-Finger Gestures off for
   one run, `-SillSettingsScroll gestures` opens the Settings panel at that
   group, and `-SillVoiceOver 1` shows it as with VoiceOver on. Under `-SillLive 1`, `-SillInputScript '3 gesture swipeUp'` sends a
